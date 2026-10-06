@@ -1,0 +1,13 @@
+repos:
+  - repo: local
+    hooks:
+      - id: clang-format
+        name: clang-format
+        entry: clang-format -i
+        language: system
+        files: \.(cpp|hpp)$
+      - id: clang-tidy
+        name: clang-tidy
+        entry: clang-tidy -p build/debug
+        language: system
+        files: \.cpp$

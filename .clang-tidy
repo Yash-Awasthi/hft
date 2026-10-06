@@ -1,0 +1,2 @@
+Checks: "bugprone-*,performance-*,-bugprone-easily-swappable-parameters"
+HeaderFilterRegex: "src/.*"
