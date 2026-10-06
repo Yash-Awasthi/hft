@@ -16,6 +16,8 @@ endif()
 
 find_package(GTest CONFIG REQUIRED)
 find_package(benchmark CONFIG REQUIRED)
+find_package(rapidcheck CONFIG REQUIRED)
+find_package(hdr_histogram CONFIG REQUIRED)
 
 find_package(zstd CONFIG REQUIRED)
 find_package(zlib-ng CONFIG REQUIRED)
