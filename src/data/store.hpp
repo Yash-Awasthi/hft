@@ -7,10 +7,15 @@
 // sequence number lets symbols be merged back into feed order.
 
 #include <bit>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
+#include <exception>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 namespace hft::data {
@@ -91,6 +96,60 @@ class SymbolReader {
     std::vector<std::uint8_t> raw_;
     std::size_t chunk_ = 0;
     std::size_t pos_ = 0;
+};
+
+// Merges the records of several symbols back into feed order. A read-ahead thread
+// decompresses chunks in global first-sequence order, which is exactly the order the merge
+// starts them in, so the hand-off is a bounded FIFO of at most `ahead` chunks.
+class MergedReader {
+   public:
+    MergedReader(const std::filesystem::path& dir, std::vector<std::uint16_t> locates,
+                 std::size_t ahead = 16);
+    ~MergedReader();
+    MergedReader(const MergedReader&) = delete;
+    MergedReader& operator=(const MergedReader&) = delete;
+
+    // `out.data` stays valid until the next call.
+    bool next(Record& out, std::uint16_t& locate);
+
+   private:
+    struct Head {
+        std::uint64_t seq;
+        std::uint32_t sym;
+        bool operator>(const Head& o) const { return seq > o.seq; }
+    };
+    struct Sym {
+        std::uint16_t locate;
+        std::filesystem::path zst_path;
+        std::vector<IndexEntry> idx;
+        std::vector<std::uint8_t> raw;
+        std::size_t pos;
+        std::size_t chunk;  // chunks taken so far
+    };
+    struct Pending {
+        std::uint64_t first_seq;
+        std::uint32_t sym;
+        IndexEntry entry;
+    };
+    struct Ready {
+        std::uint32_t sym;
+        std::vector<std::uint8_t> raw;
+    };
+
+    void run(const std::vector<Pending>& order);
+    void take_chunk(Sym& s, std::uint32_t sym);
+    void sift_down(Head h);
+
+    std::size_t ahead_;
+    std::vector<Sym> syms_;
+    std::vector<Head> heap_;
+    std::mutex mu_;
+    std::condition_variable data_, space_;
+    std::deque<Ready> ready_;
+    std::vector<std::vector<std::uint8_t>> spare_;
+    std::exception_ptr error_;
+    bool stop_ = false;
+    std::thread thread_;
 };
 
 }  // namespace hft::data

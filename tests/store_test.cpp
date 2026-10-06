@@ -96,3 +96,43 @@ TEST(Store, SeekStartsAtChunk) {
     ASSERT_TRUE(r.next(rec));
     EXPECT_EQ(rec.seq, 10u);
 }
+
+TEST(Store, MergedReaderRestoresFeedOrder) {
+    TempDir dir("merged");
+    const std::uint16_t locs[4] = {3, 9, 40000, 11};
+    {
+        StoreWriter w(dir.path, 1 << 20, 3);
+        for (std::uint64_t seq = 1; seq <= 500; ++seq) {
+            const std::uint16_t loc = locs[(seq * 7 + seq / 13) % 4];
+            const std::uint8_t m[3] = {static_cast<std::uint8_t>(seq),
+                                       static_cast<std::uint8_t>(loc), 'x'};
+            w.append(loc, seq, seq * 10, m, 1 + seq % 3);
+        }
+    }
+    for (std::size_t ahead : {1, 4, 64}) {
+        MergedReader r(dir.path, {3, 9, 11}, ahead);
+        Record rec{};
+        std::uint16_t loc = 0;
+        std::uint64_t last = 0, n = 0;
+        while (r.next(rec, loc)) {
+            EXPECT_GT(rec.seq, last);
+            EXPECT_NE(loc, 40000);
+            EXPECT_EQ(rec.len, 1 + rec.seq % 3);
+            EXPECT_EQ(rec.data[0], static_cast<std::uint8_t>(rec.seq));
+            if (rec.len > 1) {
+                EXPECT_EQ(rec.data[1], static_cast<std::uint8_t>(loc));
+            }
+            last = rec.seq;
+            ++n;
+        }
+        std::uint64_t want = 0;
+        for (std::uint64_t seq = 1; seq <= 500; ++seq)
+            want += locs[(seq * 7 + seq / 13) % 4] != 40000;
+        EXPECT_EQ(n, want);
+    }
+    EXPECT_THROW(MergedReader(dir.path, {5}), std::runtime_error);
+    MergedReader none(dir.path, {});
+    Record rec{};
+    std::uint16_t loc = 0;
+    EXPECT_FALSE(none.next(rec, loc));
+}
