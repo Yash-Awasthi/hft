@@ -3,7 +3,7 @@
 // Main L3 book. Price levels live in a dense window of kLevels ticks per side with a
 // two-level bitmap of non-empty levels, so the best level is two lzcnt or tzcnt. Prices off
 // the tick grid or outside the window sit in a small sorted overflow array per side. Orders
-// are index-addressed: hot fields (price, quantity, links) in 16 bytes, cold fields apart.
+// are index-addressed in the layout chosen by Store (order_store.hpp).
 
 #include <algorithm>
 #include <bit>
@@ -13,19 +13,20 @@
 #include <vector>
 
 #include "book/id_map.hpp"
+#include "book/order_store.hpp"
 #include "book/types.hpp"
 #include "core/pool.hpp"
 
 namespace hft::book {
 
-template <class IdMap = LinearMap>
+// Levels == 0 gives a sorted-vector book: every level lives in the overflow arrays.
+template <class IdMap = LinearMap, class Store = HotCold, std::uint32_t Levels = 2048>
 class TickBook {
    public:
-    static constexpr std::uint32_t kLevels = 2048;
+    static constexpr std::uint32_t kLevels = Levels;
 
     explicit TickBook(std::size_t expected_orders = 1024)
-        : hot_(expected_orders),
-          cold_(expected_orders),
+        : o_(expected_orders),
           ids_(expected_orders),
           over_{Pool<OverLevel>(64), Pool<OverLevel>(64)} {
         clear();
@@ -68,7 +69,7 @@ class TickBook {
         const std::uint32_t i = ids_.find(old_ref);
         if (i == kNoOrder || shares == 0 || !valid_price(price)) return false;
         if (new_ref != old_ref && ids_.find(new_ref) != kNoOrder) return false;
-        const int s = side_of(hot_[i]);
+        const int s = side_of(o_.px(i));
         remove(i, old_ref);
         place(new_ref, s, shares, price, seq);
         return true;
@@ -85,7 +86,7 @@ class TickBook {
 
     std::uint32_t shares(std::uint64_t ref) const {
         const std::uint32_t i = ids_.find(ref);
-        return i == kNoOrder ? 0 : hot_[i].qty;
+        return i == kNoOrder ? 0 : o_.qty(i);
     }
 
     std::uint64_t resting_shares() const {
@@ -103,7 +104,7 @@ class TickBook {
         const std::uint32_t i = ids_.find(ref);
         if (i == kNoOrder) return -1;
         std::int64_t ahead = 0;
-        for (std::uint32_t j = hot_[i].prev; j != kNoOrder; j = hot_[j].prev) ahead += hot_[j].qty;
+        for (std::uint32_t j = o_.prev(i); j != kNoOrder; j = o_.prev(j)) ahead += o_.qty(j);
         return ahead;
     }
 
@@ -116,12 +117,12 @@ class TickBook {
             if (l.head == kNoOrder || l.tail == kNoOrder) return false;
             std::uint64_t sum = 0;
             std::uint32_t prev = kNoOrder;
-            for (std::uint32_t j = l.head; j != kNoOrder; prev = j, j = hot_[j].next) {
-                const Hot& h = hot_[j];
-                if (h.prev != prev || side_of(h) != s || price_of(h) != px || h.qty == 0)
+            for (std::uint32_t j = l.head; j != kNoOrder; prev = j, j = o_.next(j)) {
+                if (o_.prev(j) != prev || side_of(o_.px(j)) != s || price_of(o_.px(j)) != px ||
+                    o_.qty(j) == 0)
                     return false;
-                if (ids_.find(cold_[j].ref) != j) return false;
-                sum += h.qty;
+                if (ids_.find(o_.ref(j)) != j) return false;
+                sum += o_.qty(j);
                 if (++n > live_) return false;
             }
             return prev == l.tail && sum == l.qty;
@@ -159,12 +160,12 @@ class TickBook {
                        recentres_,
                        {n_over_[0], n_over_[1]},
                        {summary_[0], summary_[1]}};
-        put(out, &h, sizeof h);
-        put(out, bits_, sizeof bits_);
-        put(out, win_, sizeof win_);
-        put(out, hot_.data(), used_ * sizeof(Hot));
-        put(out, cold_.data(), used_ * sizeof(Cold));
-        for (int s = 0; s < 2; ++s) put(out, over_[s].data(), n_over_[s] * sizeof(OverLevel));
+        detail::put(out, &h, sizeof h);
+        detail::put(out, bits_, sizeof bits_);
+        detail::put(out, win_, sizeof win_);
+        o_.save(out, used_);
+        for (int s = 0; s < 2; ++s)
+            detail::put(out, over_[s].data(), n_over_[s] * sizeof(OverLevel));
         ids_.save(out);
     }
 
@@ -172,15 +173,15 @@ class TickBook {
     bool load(const std::uint8_t* p, std::size_t n) {
         const std::uint8_t* end = p + n;
         Header h;
-        if (!get(p, end, &h, sizeof h) || h.magic != kMagic || h.live > h.used) return false;
-        if (!get(p, end, bits_, sizeof bits_) || !get(p, end, win_, sizeof win_)) return false;
-        hot_.reserve(h.used);
-        cold_.reserve(h.used);
-        if (!get(p, end, hot_.data(), h.used * sizeof(Hot))) return false;
-        if (!get(p, end, cold_.data(), h.used * sizeof(Cold))) return false;
+        if (!detail::get(p, end, &h, sizeof h) || h.magic != kMagic || h.live > h.used)
+            return false;
+        if (!detail::get(p, end, bits_, sizeof bits_) || !detail::get(p, end, win_, sizeof win_))
+            return false;
+        if (!o_.load(p, end, h.used)) return false;
         for (int s = 0; s < 2; ++s) {
             over_[s].reserve(h.n_over[s]);
-            if (!get(p, end, over_[s].data(), h.n_over[s] * sizeof(OverLevel))) return false;
+            if (!detail::get(p, end, over_[s].data(), h.n_over[s] * sizeof(OverLevel)))
+                return false;
             n_over_[s] = h.n_over[s];
             summary_[s] = h.summary[s];
         }
@@ -205,33 +206,10 @@ class TickBook {
         std::uint32_t n_over[2];
         std::uint64_t summary[2];
     };
-    static void put(std::vector<std::uint8_t>& out, const void* p, std::size_t n) {
-        if (n == 0) return;
-        const std::size_t at = out.size();
-        out.resize(at + n);
-        std::memcpy(out.data() + at, p, n);
-    }
-    static bool get(const std::uint8_t*& p, const std::uint8_t* end, void* dst, std::size_t n) {
-        if (static_cast<std::size_t>(end - p) < n) return false;
-        std::memcpy(dst, p, n);
-        p += n;
-        return true;
-    }
 
     static constexpr std::uint32_t kWords = kLevels / 64;
     static constexpr std::uint32_t kSell = 1u << 31;
 
-    struct Hot {
-        std::uint32_t px;  // price, top bit set for sell
-        std::uint32_t qty;
-        std::uint32_t next;
-        std::uint32_t prev;
-    };
-    static_assert(sizeof(Hot) == 16);
-    struct Cold {
-        std::uint64_t ref;
-        std::uint64_t seq;
-    };
     struct Level {
         std::uint64_t qty = 0;
         std::uint32_t head = kNoOrder;
@@ -244,8 +222,9 @@ class TickBook {
     };
 
     static bool valid_price(std::uint32_t px) { return px != 0 && px < kSell; }
-    static int side_of(const Hot& h) { return h.px >> 31; }
-    static std::uint32_t price_of(const Hot& h) { return h.px & ~kSell; }
+    // Stored prices carry the side in the top bit.
+    static int side_of(std::uint32_t px) { return px >> 31; }
+    static std::uint32_t price_of(std::uint32_t px) { return px & ~kSell; }
     // Bids keep the best (highest) price last in overflow, asks the lowest.
     static bool worse(int s, std::uint32_t a, std::uint32_t b) { return s == 0 ? a < b : a > b; }
 
@@ -321,7 +300,7 @@ class TickBook {
             recentre(s, px);
         }
         std::uint32_t k = slot(px);
-        if (k == kNoOrder) {
+        if (kLevels && k == kNoOrder) {
             const auto [bpx, bl] = best(s);
             if (!bl || worse(s, bpx, px)) {
                 recentre(s, px);
@@ -373,16 +352,16 @@ class TickBook {
         }
     }
 
-    Level& level_of(const Hot& h) {
-        const int s = side_of(h);
-        const std::uint32_t px = price_of(h);
+    Level& level_of(std::uint32_t stored) {
+        const int s = side_of(stored);
+        const std::uint32_t px = price_of(stored);
         if (const std::uint32_t k = slot(px); k != kNoOrder) return win_[s][k];
         return over_find(s, px)->l;
     }
 
-    void drop_level_if_empty(const Hot& h) {
-        const int s = side_of(h);
-        const std::uint32_t px = price_of(h);
+    void drop_level_if_empty(std::uint32_t stored) {
+        const int s = side_of(stored);
+        const std::uint32_t px = price_of(stored);
         if (const std::uint32_t k = slot(px); k != kNoOrder) {
             if (win_[s][k].head == kNoOrder) clear_bit(s, k);
         } else {
@@ -396,17 +375,15 @@ class TickBook {
         std::uint32_t i;
         if (free_ != kNoOrder) {
             i = free_;
-            free_ = hot_[i].next;
+            free_ = o_.next(i);
         } else {
             i = used_++;
-            hot_.reserve(used_);
-            cold_.reserve(used_);
+            o_.reserve(used_);
         }
         Level& l = level_for_add(s, price);
-        hot_[i] = Hot{price | (s ? kSell : 0), shares, kNoOrder, l.tail};
-        cold_[i] = Cold{ref, seq};
+        o_.set(i, price | (s ? kSell : 0), shares, kNoOrder, l.tail, ref, seq);
         if (l.tail != kNoOrder)
-            hot_[l.tail].next = i;
+            o_.next(l.tail) = i;
         else
             l.head = i;
         l.tail = i;
@@ -417,37 +394,36 @@ class TickBook {
 
     bool reduce(std::uint64_t ref, std::uint32_t shares) {
         const std::uint32_t i = ids_.find(ref);
-        if (i == kNoOrder || shares == 0 || shares > hot_[i].qty) return false;
-        if (shares == hot_[i].qty) {
+        if (i == kNoOrder || shares == 0 || shares > o_.qty(i)) return false;
+        if (shares == o_.qty(i)) {
             remove(i, ref);
             return true;
         }
-        hot_[i].qty -= shares;
-        level_of(hot_[i]).qty -= shares;
+        o_.qty(i) -= shares;
+        level_of(o_.px(i)).qty -= shares;
         return true;
     }
 
     void remove(std::uint32_t i, std::uint64_t ref) {
-        Hot& h = hot_[i];
-        Level& l = level_of(h);
-        l.qty -= h.qty;
-        if (h.prev != kNoOrder)
-            hot_[h.prev].next = h.next;
+        const std::uint32_t stored = o_.px(i), next = o_.next(i), prev = o_.prev(i);
+        Level& l = level_of(stored);
+        l.qty -= o_.qty(i);
+        if (prev != kNoOrder)
+            o_.next(prev) = next;
         else
-            l.head = h.next;
-        if (h.next != kNoOrder)
-            hot_[h.next].prev = h.prev;
+            l.head = next;
+        if (next != kNoOrder)
+            o_.prev(next) = prev;
         else
-            l.tail = h.prev;
-        drop_level_if_empty(h);
+            l.tail = prev;
+        drop_level_if_empty(stored);
         ids_.erase(ref);
-        h.next = free_;
+        o_.next(i) = free_;
         free_ = i;
         --live_;
     }
 
-    Pool<Hot> hot_;
-    Pool<Cold> cold_;
+    Store o_;
     IdMap ids_;
     Pool<OverLevel> over_[2];
     std::uint32_t n_over_[2];
@@ -456,8 +432,11 @@ class TickBook {
     std::uint32_t tick_, base_;
     std::uint64_t recentres_;
     std::uint64_t summary_[2];
-    std::uint64_t bits_[2][kWords];
-    Level win_[2][kLevels];
+    std::uint64_t bits_[2][kWords ? kWords : 1];
+    Level win_[2][kLevels ? kLevels : 1];
 };
+
+template <class IdMap = LinearMap, class Store = HotCold>
+using SortedVecBook = TickBook<IdMap, Store, 0>;
 
 }  // namespace hft::book

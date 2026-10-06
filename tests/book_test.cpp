@@ -2,6 +2,7 @@
 
 #include <vector>
 
+#include "book/btree_book.hpp"
 #include "book/map_book.hpp"
 #include "book/tick_book.hpp"
 
@@ -16,7 +17,9 @@ class BookTest : public ::testing::Test {
     void TearDown() override { EXPECT_TRUE(b.check()); }
 };
 
-using Books = ::testing::Types<MapBook, TickBook<LinearMap>, TickBook<RobinHoodMap>>;
+using Books = ::testing::Types<MapBook, TickBook<LinearMap>, TickBook<RobinHoodMap>,
+                               TickBook<DirectMap<>>, TickBook<LinearMap, Aos>,
+                               TickBook<LinearMap, Soa>, SortedVecBook<>, BTreeBook<>>;
 TYPED_TEST_SUITE(BookTest, Books);
 
 constexpr Side kB = Side::Buy;
@@ -157,10 +160,17 @@ TYPED_TEST(BookTest, SharesAndRestingTotal) {
 }
 
 // A loaded snapshot replayed forward must serialise byte-identically to the original.
-TEST(TickBookSnapshot, LoadThenReplayMatches) {
-    TickBook<LinearMap> a(16);
+template <class B>
+class TickSnapshot : public ::testing::Test {};
+using TickBooks =
+    ::testing::Types<TickBook<LinearMap>, TickBook<RobinHoodMap>, TickBook<DirectMap<16>>,
+                     TickBook<LinearMap, Aos>, TickBook<LinearMap, Soa>>;
+TYPED_TEST_SUITE(TickSnapshot, TickBooks);
+
+TYPED_TEST(TickSnapshot, LoadThenReplayMatches) {
+    TypeParam a(16);
     std::uint64_t ref = 1;
-    auto step = [&](TickBook<LinearMap>& b, std::uint64_t i) {
+    auto step = [&](TypeParam& b, std::uint64_t i) {
         const std::uint32_t px = 20'0000 + static_cast<std::uint32_t>(i * 7919 % 300) * 100;
         b.add(ref + i, i % 2 ? kS : kB, 100, i % 11 == 0 ? px + 3 : px, i);
         if (i % 3 == 0) b.erase(ref + i / 2);
@@ -170,7 +180,7 @@ TEST(TickBookSnapshot, LoadThenReplayMatches) {
     std::vector<std::uint8_t> snap;
     a.save(snap);
 
-    TickBook<LinearMap> b;
+    TypeParam b;
     ASSERT_TRUE(b.load(snap.data(), snap.size()));
     EXPECT_TRUE(b.check());
     EXPECT_EQ(b.bbo(), a.bbo());

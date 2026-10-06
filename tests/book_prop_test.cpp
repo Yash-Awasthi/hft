@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "book/btree_book.hpp"
 #include "book/id_map.hpp"
 #include "book/map_book.hpp"
 #include "book/tick_book.hpp"
@@ -124,7 +125,8 @@ struct Arbitrary<Op> {
 }  // namespace rc
 
 RC_GTEST_PROP(BookProp, AllBooksMatchBaseline, (const std::vector<Op>& ops)) {
-    run<TickBook<LinearMap>, TickBook<RobinHoodMap>>(ops);
+    run<TickBook<LinearMap>, TickBook<RobinHoodMap>, TickBook<DirectMap<16>>,
+        TickBook<LinearMap, Aos>, TickBook<LinearMap, Soa>, SortedVecBook<>, BTreeBook<>>(ops);
 }
 
 template <class Map>
@@ -162,4 +164,9 @@ RC_GTEST_PROP(IdMapProp, LinearMatchesUnorderedMap,
 RC_GTEST_PROP(IdMapProp, RobinHoodMatchesUnorderedMap,
               (const std::vector<std::pair<std::uint8_t, std::uint16_t>>& ops)) {
     map_matches<RobinHoodMap>(ops);
+}
+
+RC_GTEST_PROP(IdMapProp, DirectMatchesUnorderedMap,
+              (const std::vector<std::pair<std::uint8_t, std::uint16_t>>& ops)) {
+    map_matches<DirectMap<16>>(ops);
 }
