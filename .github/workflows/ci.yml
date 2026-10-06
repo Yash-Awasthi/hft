@@ -26,3 +26,16 @@ jobs:
       - run: ctest --test-dir build/${{ matrix.preset }} --output-on-failure
       - if: matrix.preset == 'release'
         run: build/release/bench/hft_bench --benchmark_min_time=0.01s
+
+  fuzz:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
+          sudo git -C "$VCPKG_INSTALLATION_ROOT" fetch origin master
+      - run: cmake --preset fuzz
+      - run: cmake --build build/fuzz --target itch_fuzz
+      - run: |
+          mkdir -p "$RUNNER_TEMP/corpus"
+          build/fuzz/fuzz/itch_fuzz -max_total_time=30 "$RUNNER_TEMP/corpus"
