@@ -1,30 +1,20 @@
 #include "data/store.hpp"
 
 #include <gtest/gtest.h>
-#include <unistd.h>
 
-#include <filesystem>
 #include <map>
 #include <string>
 #include <vector>
 
+#include "temp_dir.hpp"
+
 using namespace hft::data;
-namespace fs = std::filesystem;
 
 namespace {
 
-struct TempDir {
-    fs::path path = fs::temp_directory_path() / ("hft_store_test_" + std::to_string(::getpid()));
-    TempDir() {
-        fs::remove_all(path);
-        fs::create_directories(path);
-    }
-    ~TempDir() { fs::remove_all(path); }
-};
-
 // Writes 3 interleaved symbols and checks each reads back complete and in order.
 void roundtrip(std::size_t budget, std::uint32_t chunk_msgs) {
-    TempDir dir;
+    TempDir dir("store");
     std::map<std::uint16_t, std::vector<std::pair<std::uint64_t, std::string>>> want;
     {
         StoreWriter w(dir.path, budget, chunk_msgs);
@@ -61,7 +51,7 @@ TEST(Store, RoundtripSmallChunks) { roundtrip(1 << 20, 4); }
 TEST(Store, RoundtripTinyBudgetForcesFlushes) { roundtrip(64, 1000); }
 
 TEST(Store, IndexRecordsChunkBounds) {
-    TempDir dir;
+    TempDir dir("store");
     {
         StoreWriter w(dir.path, 1 << 20, 2);
         const std::uint8_t m[1] = {'D'};
@@ -81,6 +71,6 @@ TEST(Store, IndexRecordsChunkBounds) {
 }
 
 TEST(Store, MissingSymbolThrows) {
-    TempDir dir;
+    TempDir dir("store");
     EXPECT_THROW(SymbolReader(dir.path, 9), std::runtime_error);
 }

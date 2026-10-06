@@ -1,14 +1,22 @@
-// Splits a BinaryFILE ITCH stream on stdin into the per-symbol zstd store.
-// Usage: zcat day.gz | ingest <empty-output-dir>
+// Splits a BinaryFILE ITCH stream into the per-symbol zstd store.
+// Usage: ingest <empty-output-dir> [day.gz]
+// With a .gz argument the file is decompressed in-process, the gzip CRC is verified and the
+// SHA-256 of the compressed file is recorded in <output-dir>/source.sha256. Without it the
+// raw stream is read from stdin.
 
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
+#include "data/gzip.hpp"
+#include "data/prefetch.hpp"
 #include "data/store.hpp"
 #include "feed/itch.hpp"
 
@@ -29,19 +37,23 @@ struct SymbolMap {
     }
 };
 
-}  // namespace
-
-int main(int argc, char** argv) {
+int run(const std::filesystem::path& out, const char* gz_path) {
     using namespace hft::itch;
-    if (argc != 2) {
-        std::fprintf(stderr, "usage: ingest <output-dir>\n");
-        return 2;
-    }
-    const std::filesystem::path out = argv[1];
     std::filesystem::create_directories(out);
     if (!std::filesystem::is_empty(out)) {
         std::fprintf(stderr, "output dir not empty\n");
         return 2;
+    }
+
+    std::unique_ptr<hft::data::GzipReader> gz;
+    std::unique_ptr<hft::data::Prefetch<hft::data::GzipReader>> prefetch;
+    std::function<std::size_t(std::uint8_t*, std::size_t)> read_chunk;
+    if (gz_path) {
+        gz = std::make_unique<hft::data::GzipReader>(gz_path);
+        prefetch = std::make_unique<hft::data::Prefetch<hft::data::GzipReader>>(*gz);
+        read_chunk = [&](std::uint8_t* p, std::size_t n) { return prefetch->read(p, n); };
+    } else {
+        read_chunk = [](std::uint8_t* p, std::size_t n) { return std::fread(p, 1, n, stdin); };
     }
 
     hft::data::StoreWriter writer(out, kBudget, kChunkMsgs);
@@ -51,7 +63,7 @@ int main(int argc, char** argv) {
     unsigned long long seq = 0, bad = 0;
 
     for (;;) {
-        const std::size_t got = std::fread(buf.data() + have, 1, kChunk, stdin);
+        const std::size_t got = read_chunk(buf.data() + have, kChunk);
         have += got;
         std::size_t off = 0;
         Frame f{};
@@ -74,10 +86,31 @@ int main(int argc, char** argv) {
     std::ofstream tsv(out / "symbols.tsv");
     for (const auto& [locate, name] : symbols.names) tsv << locate << '\t' << name << '\n';
 
+    if (gz) {
+        const std::string sha = gz->sha256_hex();
+        std::ofstream(out / "source.sha256")
+            << sha << "  " << std::filesystem::path(gz_path).filename().string() << '\n';
+        std::printf("source_sha256 %s\n", sha.c_str());
+    }
     std::printf(
         "frames %llu\nbad %llu\nsymbols %zu\ntrailing_bytes %zu\nraw_bytes %llu\n"
         "compressed_bytes %llu\n",
         seq, bad, symbols.names.size(), have, static_cast<unsigned long long>(writer.raw_bytes()),
         static_cast<unsigned long long>(writer.compressed_bytes()));
-    return bad ? 1 : 0;
+    return (bad || have) ? 1 : 0;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    if (argc < 2 || argc > 3) {
+        std::fprintf(stderr, "usage: ingest <output-dir> [day.gz]\n");
+        return 2;
+    }
+    try {
+        return run(argv[1], argc == 3 ? argv[2] : nullptr);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "ingest failed: %s\n", e.what());
+        return 1;
+    }
 }

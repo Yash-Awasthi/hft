@@ -18,12 +18,14 @@ find_package(GTest CONFIG REQUIRED)
 find_package(benchmark CONFIG REQUIRED)
 
 find_package(zstd CONFIG REQUIRED)
+find_package(zlib-ng CONFIG REQUIRED)
+find_package(Threads REQUIRED)
 
 add_library(hft_core INTERFACE)
 target_include_directories(hft_core INTERFACE src)
 
-add_library(hft_data STATIC src/data/store.cpp)
-target_link_libraries(hft_data PUBLIC hft_core zstd::libzstd)
+add_library(hft_data STATIC src/data/store.cpp src/data/gzip.cpp)
+target_link_libraries(hft_data PUBLIC hft_core zstd::libzstd zlib-ng::zlib Threads::Threads)
 
 enable_testing()
 add_subdirectory(tests)

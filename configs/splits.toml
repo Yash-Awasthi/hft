@@ -1,0 +1,41 @@
+# Day split registry. Remote file names are under emi.nasdaq.com/ITCH/Nasdaq ITCH/.
+# Test days are locked: they are opened once, for the final run, with the explicit test flag.
+
+[train]
+days = ["2025-12-08", "2025-12-09", "2025-12-10"]
+
+[validation]
+days = ["2025-12-11"]
+
+[test]
+locked = true
+days = ["2025-12-12", "2026-05-15", "2026-05-18", "2026-06-12"]
+
+# Different regimes: used to test robustness, never for fitting.
+[robustness]
+days = [
+  "2025-11-28",
+  "2019-01-30", "2019-03-27", "2019-07-30", "2019-08-30", "2019-10-18", "2019-10-30",
+  "2019-12-30", "2020-01-30", "2021-07-13", "2021-08-13",
+]
+
+[files]
+"2025-11-28" = "S112825-v50.txt.gz"
+"2025-12-08" = "S120825-v50.txt.gz"
+"2025-12-09" = "S120925-v50.txt.gz"
+"2025-12-10" = "S121025-v50.txt.gz"
+"2025-12-11" = "S121125-v50.txt.gz"
+"2025-12-12" = "S121225-v50.txt.gz"
+"2026-05-15" = "itch50_05_15.gz"
+"2026-05-18" = "itch50_05_18.gz"
+"2026-06-12" = "S061226-v50.txt.gz"
+"2019-01-30" = "01302019.NASDAQ_ITCH50.gz"
+"2019-03-27" = "03272019.NASDAQ_ITCH50.gz"
+"2019-07-30" = "07302019.NASDAQ_ITCH50.gz"
+"2019-08-30" = "08302019.NASDAQ_ITCH50.gz"
+"2019-10-18" = "S101819-v50.txt.gz"
+"2019-10-30" = "10302019.NASDAQ_ITCH50.gz"
+"2019-12-30" = "12302019.NASDAQ_ITCH50.gz"
+"2020-01-30" = "01302020.NASDAQ_ITCH50.gz"
+"2021-07-13" = "S071321-v50.txt.gz"
+"2021-08-13" = "S081321-v50.txt.gz"

@@ -1,6 +1,6 @@
 {
   "name": "hft",
   "version": "0.0.0",
-  "dependencies": ["gtest", "benchmark", "zstd"],
+  "dependencies": ["gtest", "benchmark", "zstd", "zlib-ng"],
   "builtin-baseline": "001713e802f5cf619a64461b918161be6a0634f0"
 }
