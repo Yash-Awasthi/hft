@@ -66,8 +66,10 @@ class Table {
 
    protected:
     static void append(std::vector<std::uint8_t>& out, const void* p, std::size_t n) {
-        const auto* b = static_cast<const std::uint8_t*>(p);
-        out.insert(out.end(), b, b + n);
+        if (n == 0) return;
+        const std::size_t at = out.size();
+        out.resize(at + n);
+        std::memcpy(out.data() + at, p, n);
     }
 
     std::size_t home(std::uint64_t key) const {
