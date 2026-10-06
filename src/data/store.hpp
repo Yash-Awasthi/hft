@@ -75,6 +75,13 @@ class SymbolReader {
    public:
     SymbolReader(const std::filesystem::path& dir, std::uint16_t locate);
     bool next(Record& out);
+    // Positions the reader at the first record of chunk `chunk`.
+    void seek(std::size_t chunk) {
+        chunk_ = chunk;
+        raw_.clear();
+        pos_ = 0;
+    }
+    const std::vector<IndexEntry>& index() const { return idx_; }
 
    private:
     void load(std::size_t chunk);

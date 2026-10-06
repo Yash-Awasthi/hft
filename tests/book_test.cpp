@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <vector>
+
 #include "book/map_book.hpp"
 #include "book/tick_book.hpp"
 
@@ -152,4 +154,35 @@ TYPED_TEST(BookTest, SharesAndRestingTotal) {
     EXPECT_EQ(b.resting_shares(), 117u);
     b.erase(2);
     EXPECT_EQ(b.resting_shares(), 77u);
+}
+
+// A loaded snapshot replayed forward must serialise byte-identically to the original.
+TEST(TickBookSnapshot, LoadThenReplayMatches) {
+    TickBook<LinearMap> a(16);
+    std::uint64_t ref = 1;
+    auto step = [&](TickBook<LinearMap>& b, std::uint64_t i) {
+        const std::uint32_t px = 20'0000 + static_cast<std::uint32_t>(i * 7919 % 300) * 100;
+        b.add(ref + i, i % 2 ? kS : kB, 100, i % 11 == 0 ? px + 3 : px, i);
+        if (i % 3 == 0) b.erase(ref + i / 2);
+        if (i % 5 == 0) b.execute(ref + i - 1, 10);
+    };
+    for (std::uint64_t i = 0; i < 2000; ++i) step(a, i);
+    std::vector<std::uint8_t> snap;
+    a.save(snap);
+
+    TickBook<LinearMap> b;
+    ASSERT_TRUE(b.load(snap.data(), snap.size()));
+    EXPECT_TRUE(b.check());
+    EXPECT_EQ(b.bbo(), a.bbo());
+    for (std::uint64_t i = 2000; i < 4000; ++i) {
+        step(a, i);
+        step(b, i);
+    }
+    std::vector<std::uint8_t> sa, sb;
+    a.save(sa);
+    b.save(sb);
+    EXPECT_EQ(sa, sb);
+    snap[0] ^= 1;
+    EXPECT_FALSE(b.load(snap.data(), snap.size()));
+    EXPECT_FALSE(b.load(sa.data(), sa.size() - 1));
 }

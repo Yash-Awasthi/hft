@@ -74,3 +74,25 @@ TEST(Store, MissingSymbolThrows) {
     TempDir dir("store");
     EXPECT_THROW(SymbolReader(dir.path, 9), std::runtime_error);
 }
+
+TEST(Store, SeekStartsAtChunk) {
+    TempDir dir("store");
+    {
+        StoreWriter w(dir.path, 1 << 20, 2);
+        const std::uint8_t m[1] = {'D'};
+        for (std::uint64_t seq = 10; seq < 15; ++seq) w.append(5, seq, seq * 100, m, 1);
+    }
+    SymbolReader r(dir.path, 5);
+    ASSERT_EQ(r.index().size(), 3u);
+    Record rec{};
+    r.seek(1);
+    ASSERT_TRUE(r.next(rec));
+    EXPECT_EQ(rec.seq, 12u);
+    r.seek(2);
+    ASSERT_TRUE(r.next(rec));
+    EXPECT_EQ(rec.seq, 14u);
+    EXPECT_FALSE(r.next(rec));
+    r.seek(0);
+    ASSERT_TRUE(r.next(rec));
+    EXPECT_EQ(rec.seq, 10u);
+}

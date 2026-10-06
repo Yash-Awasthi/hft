@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <vector>
 
 #include "book/id_map.hpp"
 #include "book/types.hpp"
@@ -145,7 +146,76 @@ class TickBook {
         return n == live_ && ids_.size() == live_;
     }
 
+    // Raw image of the whole state (pools up to their used size, window, ID table). It is a
+    // checkpoint format, not an interchange one: valid only for the same build of this type.
+    void save(std::vector<std::uint8_t>& out) const {
+        out.clear();
+        const Header h{kMagic,
+                       used_,
+                       free_,
+                       static_cast<std::uint64_t>(live_),
+                       tick_,
+                       base_,
+                       recentres_,
+                       {n_over_[0], n_over_[1]},
+                       {summary_[0], summary_[1]}};
+        put(out, &h, sizeof h);
+        put(out, bits_, sizeof bits_);
+        put(out, win_, sizeof win_);
+        put(out, hot_.data(), used_ * sizeof(Hot));
+        put(out, cold_.data(), used_ * sizeof(Cold));
+        for (int s = 0; s < 2; ++s) put(out, over_[s].data(), n_over_[s] * sizeof(OverLevel));
+        ids_.save(out);
+    }
+
+    // Returns false and leaves the book unspecified on a malformed image.
+    bool load(const std::uint8_t* p, std::size_t n) {
+        const std::uint8_t* end = p + n;
+        Header h;
+        if (!get(p, end, &h, sizeof h) || h.magic != kMagic || h.live > h.used) return false;
+        if (!get(p, end, bits_, sizeof bits_) || !get(p, end, win_, sizeof win_)) return false;
+        hot_.reserve(h.used);
+        cold_.reserve(h.used);
+        if (!get(p, end, hot_.data(), h.used * sizeof(Hot))) return false;
+        if (!get(p, end, cold_.data(), h.used * sizeof(Cold))) return false;
+        for (int s = 0; s < 2; ++s) {
+            over_[s].reserve(h.n_over[s]);
+            if (!get(p, end, over_[s].data(), h.n_over[s] * sizeof(OverLevel))) return false;
+            n_over_[s] = h.n_over[s];
+            summary_[s] = h.summary[s];
+        }
+        if (!ids_.load(p, end) || p != end) return false;
+        used_ = h.used;
+        free_ = h.free;
+        live_ = h.live;
+        tick_ = h.tick;
+        base_ = h.base;
+        recentres_ = h.recentres;
+        return true;
+    }
+
    private:
+    static constexpr std::uint64_t kMagic = 0x314b4f4f424b4354;  // "TCKBOOK1"
+    struct Header {
+        std::uint64_t magic;
+        std::uint32_t used, free;
+        std::uint64_t live;
+        std::uint32_t tick, base;
+        std::uint64_t recentres;
+        std::uint32_t n_over[2];
+        std::uint64_t summary[2];
+    };
+    static void put(std::vector<std::uint8_t>& out, const void* p, std::size_t n) {
+        const auto* b = static_cast<const std::uint8_t*>(p);
+        out.insert(out.end(), b, b + n);
+    }
+    static bool get(const std::uint8_t*& p, const std::uint8_t* end, void* dst, std::size_t n) {
+        if (static_cast<std::size_t>(end - p) < n) return false;
+        std::memcpy(dst, p, n);
+        p += n;
+        return true;
+    }
+
     static constexpr std::uint32_t kWords = kLevels / 64;
     static constexpr std::uint32_t kSell = 1u << 31;
 

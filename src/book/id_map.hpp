@@ -7,6 +7,8 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <vector>
 
 #include "core/pool.hpp"
 
@@ -41,7 +43,33 @@ class Table {
             if (slots_[i].key != kEmpty) f(slots_[i].key, slots_[i].val);
     }
 
+    // Raw table image, so a loaded map probes exactly like the saved one.
+    void save(std::vector<std::uint8_t>& out) const {
+        const std::uint64_t head[2] = {capacity(), size_};
+        append(out, head, sizeof head);
+        append(out, slots_.data(), capacity() * sizeof(Slot));
+    }
+    bool load(const std::uint8_t*& p, const std::uint8_t* end) {
+        std::uint64_t head[2];
+        if (end - p < static_cast<std::ptrdiff_t>(sizeof head)) return false;
+        std::memcpy(head, p, sizeof head);
+        if (!std::has_single_bit(head[0]) || head[0] < 64 || head[1] * 2 > head[0]) return false;
+        if (static_cast<std::uint64_t>(end - p) - sizeof head < head[0] * sizeof(Slot))
+            return false;
+        p += sizeof head;
+        if (head[0] != capacity()) rebuild(head[0]);
+        std::memcpy(slots_.data(), p, head[0] * sizeof(Slot));
+        p += head[0] * sizeof(Slot);
+        size_ = head[1];
+        return true;
+    }
+
    protected:
+    static void append(std::vector<std::uint8_t>& out, const void* p, std::size_t n) {
+        const auto* b = static_cast<const std::uint8_t*>(p);
+        out.insert(out.end(), b, b + n);
+    }
+
     std::size_t home(std::uint64_t key) const {
         return static_cast<std::size_t>((key * 0x9E3779B97F4A7C15ull) >> shift_);
     }
