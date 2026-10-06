@@ -17,7 +17,9 @@ jobs:
       CXX: ${{ matrix.cxx }}
     steps:
       - uses: actions/checkout@v4
-      - run: echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
+      - run: |
+          echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
+          sudo git -C "$VCPKG_INSTALLATION_ROOT" fetch origin master
       - run: sudo sysctl vm.mmap_rnd_bits=28
       - run: cmake --preset ${{ matrix.preset }}
       - run: cmake --build build/${{ matrix.preset }}
