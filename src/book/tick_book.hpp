@@ -81,6 +81,20 @@ class TickBook {
     }
 
     std::size_t order_count() const { return live_; }
+
+    std::uint32_t shares(std::uint64_t ref) const {
+        const std::uint32_t i = ids_.find(ref);
+        return i == kNoOrder ? 0 : hot_[i].qty;
+    }
+
+    std::uint64_t resting_shares() const {
+        std::uint64_t n = 0;
+        for (int s = 0; s < 2; ++s) {
+            for (const Level& l : win_[s]) n += l.qty;
+            for (std::uint32_t k = 0; k < n_over_[s]; ++k) n += over_[s][k].l.qty;
+        }
+        return n;
+    }
     std::uint64_t recentres() const { return recentres_; }
     std::size_t overflow_levels() const { return n_over_[0] + n_over_[1]; }
 

@@ -140,3 +140,16 @@ TYPED_TEST(BookTest, SubDollarPrices) {
     b.erase(2);
     EXPECT_EQ(b.bbo(), (Bbo{3412, 1'0100, 1000, 50}));
 }
+
+TYPED_TEST(BookTest, SharesAndRestingTotal) {
+    auto& b = this->b;
+    b.add(1, kB, 100, 10'0000, 1);
+    b.add(2, kS, 40, 10'0100, 2);
+    b.add(3, kS, 7, 10'0150, 3);  // overflow level in the tick book
+    b.execute(1, 30);
+    EXPECT_EQ(b.shares(1), 70u);
+    EXPECT_EQ(b.shares(9), 0u);
+    EXPECT_EQ(b.resting_shares(), 117u);
+    b.erase(2);
+    EXPECT_EQ(b.resting_shares(), 77u);
+}

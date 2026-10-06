@@ -55,6 +55,23 @@ struct SymbolName {
     void operator()(const T&) {}
 };
 
+// Share flow into and out of the book, read before each message is applied, so that
+// added = executed + cancelled + deleted + replaced + resting at any point.
+template <class Book>
+struct Flow {
+    const Book& b;
+    std::uint64_t added = 0, cancelled = 0, removed = 0;
+    void operator()(const itch::AddOrder& m) { added += m.shares; }
+    void operator()(const itch::OrderCancel& m) { cancelled += m.cancelled; }
+    void operator()(const itch::OrderDelete& m) { removed += b.shares(m.ref); }
+    void operator()(const itch::OrderReplace& m) {
+        removed += b.shares(m.orig_ref);
+        added += m.shares;
+    }
+    template <class T>
+    void operator()(const T&) {}
+};
+
 template <class Book>
 Result replay(const std::filesystem::path& dir, std::uint16_t locate, std::uint64_t check_every) {
     Book b;
@@ -67,8 +84,10 @@ Result replay(const std::filesystem::path& dir, std::uint16_t locate, std::uint6
     bool in_cross = false;
     char state = 0;
     SymbolName sym{r.symbol, state};
+    Flow<Book> flow{b};
     while (rd.next(rec)) {
         ++r.msgs;
+        itch::dispatch(rec.data, rec.len, flow);
         ap.seq = rec.seq;
         const std::uint64_t before = ap.stats.book_msgs;
         itch::dispatch(rec.data, rec.len, ap);
@@ -96,6 +115,8 @@ Result replay(const std::filesystem::path& dir, std::uint16_t locate, std::uint6
         r.locked += both && cur.bid_px == cur.ask_px;
     }
     if (check_every && !b.check()) ++r.check_failures;
+    if (flow.added != ap.stats.executed + flow.cancelled + flow.removed + b.resting_shares())
+        ++r.check_failures;
     r.stats = ap.stats;
     return r;
 }

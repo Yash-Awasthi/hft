@@ -55,6 +55,19 @@ class MapBook {
 
     std::size_t order_count() const { return orders_.size(); }
 
+    // Remaining shares of an order, 0 if unknown.
+    std::uint32_t shares(std::uint64_t ref) const {
+        auto it = orders_.find(ref);
+        return it == orders_.end() ? 0 : it->second.shares;
+    }
+
+    std::uint64_t resting_shares() const {
+        std::uint64_t n = 0;
+        for (const auto& [px, l] : bids_) n += l.qty;
+        for (const auto& [px, l] : asks_) n += l.qty;
+        return n;
+    }
+
     // Level quantity equals the sum of its orders, every order is indexed by its ID and sits
     // on the level of its price and side, and no level is empty.
     bool check() const {
