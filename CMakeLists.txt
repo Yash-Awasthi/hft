@@ -19,6 +19,8 @@ find_package(benchmark CONFIG REQUIRED)
 find_package(rapidcheck CONFIG REQUIRED)
 find_package(hdr_histogram CONFIG REQUIRED)
 find_package(tlx CONFIG REQUIRED)
+find_package(tomlplusplus CONFIG REQUIRED)
+find_package(unofficial-sqlite3 CONFIG REQUIRED)
 
 find_package(zstd CONFIG REQUIRED)
 find_package(zlib-ng CONFIG REQUIRED)
@@ -29,6 +31,11 @@ target_include_directories(hft_core INTERFACE src)
 
 add_library(hft_data STATIC src/data/store.cpp src/data/gzip.cpp)
 target_link_libraries(hft_data PUBLIC hft_core zstd::libzstd zlib-ng::zlib Threads::Threads)
+
+add_library(hft_experiment STATIC src/experiment/config.cpp src/experiment/splits.cpp
+                                  src/experiment/registry.cpp)
+target_link_libraries(hft_experiment PUBLIC hft_core tomlplusplus::tomlplusplus
+                                            unofficial::sqlite3::sqlite3)
 
 enable_testing()
 add_subdirectory(tests)

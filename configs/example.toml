@@ -1,0 +1,27 @@
+# Example run. Schema: src/experiment/config.cpp. Unknown keys are rejected.
+
+[run]
+name = "naive-join-dec08"
+question = "Q1"  # research question this run counts towards
+seed = 1
+
+[data]
+days = ["2025-12-08"]  # train days only; test days need allow_test = true
+symbols = ["AAPL"]
+
+[exchange]
+tick = 100           # ITCH price units: 100 = $0.01, 50 = $0.005
+maker_rebate = 2000  # micro-dollars per share
+taker_fee = 3000
+stp = "cancel_newest"    # none, cancel_newest, cancel_oldest, cancel_both
+lock = "reject"          # reject, reprice, allow_lock
+fill_rule = "queue"      # queue, trade_through
+
+[latency]
+market_data_ns = 0
+order_entry_ns = 0
+processing_ns = 0
+
+[strategy]
+name = "naive"
+params = { size = 100 }

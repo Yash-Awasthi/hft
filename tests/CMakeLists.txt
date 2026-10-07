@@ -3,8 +3,10 @@ include(GoogleTest)
 add_executable(hft_tests endian_test.cpp itch_test.cpp store_test.cpp gzip_test.cpp book_test.cpp
                          book_prop_test.cpp timing_test.cpp philox_test.cpp
                          matching_test.cpp scheduler_test.cpp
-                         replay_exchange_test.cpp)
-target_link_libraries(hft_tests PRIVATE hft_core hft_data GTest::gtest_main rapidcheck tlx)
+                         replay_exchange_test.cpp experiment_test.cpp)
+target_link_libraries(hft_tests PRIVATE hft_core hft_data GTest::gtest_main rapidcheck tlx
+                                        hft_experiment)
+target_compile_definitions(hft_tests PRIVATE HFT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 gtest_discover_tests(hft_tests)
 # RapidCheck instantiates the deprecated std::aligned_storage in user translation units.
 set_source_files_properties(book_prop_test.cpp matching_test.cpp PROPERTIES COMPILE_OPTIONS -Wno-deprecated-declarations)
