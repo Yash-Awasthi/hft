@@ -67,8 +67,9 @@ task finishes or blocks.
 
 ## In progress
 
-- Branch `ms6-finish` (worktree `.claude/worktrees/ms6-finish`) holds the MS6 finish and the
-  later fixes; it fast-forwards main (`git merge --ff-only ms6-finish`). Not pushed (item 7).
+- Optimisation pass on main: sequence-window merge, parallel read-ahead, one ID probe per
+  book operation. Wall-clock before/after numbers wait for a turbo-off bench window.
+- Branch `ms6-finish` is merged into main (its worktree can go); main is not pushed (item 7).
 - MS7 to MS10: first versions done with reports (`docs/results/ms7-regime.md`,
   `ms8-impact.md`, `ms9-transformer.md`, `ms10-validity.md`); misses listed under Results
   and in each report's "Not built".
