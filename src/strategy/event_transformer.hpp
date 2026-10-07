@@ -80,12 +80,14 @@ class EventTransformer {
     // Per-symbol cache: keys and values of the last `window` events in every layer.
     struct State {
         std::vector<float> k, v;  // [layer][slot][d]
+        std::vector<float> kt;    // keys transposed, [layer][d][slot (+8 padding)]: 8 scores per FMA
         std::uint64_t pos = 0;
     };
     State state() const {
         State s;
         const auto n = static_cast<std::size_t>(layers_ * window_ * d_);
         s.k.assign(n, 0), s.v.assign(n, 0);
+        s.kt.assign(static_cast<std::size_t>(layers_ * d_ * (window_ + 8)), 0);
         return s;
     }
 
@@ -113,14 +115,27 @@ class EventTransformer {
             float* V = s.v.data() + static_cast<std::size_t>(l * window_ * d);
             std::memcpy(K + slot * d, qkv + d, sizeof(float) * static_cast<std::size_t>(d));
             std::memcpy(V + slot * d, qkv + 2 * d, sizeof(float) * static_cast<std::size_t>(d));
+            const int wt = window_ + 8;
+            float* Kt = s.kt.data() + static_cast<std::size_t>(l * d * wt);
+            for (int i = 0; i < d; ++i) Kt[i * wt + slot] = qkv[d + i];
             for (int hd = 0; hd < heads_; ++hd) {
                 const float* q = qkv + hd * dh;
                 float mx = -INFINITY;
-                // Oldest first, the order of the training mask's row, for the same rounding.
-                for (int j = 0, sl = first; j < span; ++j, sl = sl + 1 == window_ ? 0 : sl + 1) {
-                    const int age = span - 1 - j;
-                    sc[j] = dot<Avx>(q, K + sl * d + hd * dh, dh) * scale - slopes_[hd] * static_cast<float>(age);
-                    mx = std::max(mx, sc[j]);
+                if constexpr (Avx) {
+                    // Valid slots are 0..span-1 (the ring is full, or has not wrapped yet).
+                    alignas(32) float raw[kMaxW + 8];
+                    scores_avx2(q, Kt + hd * dh * wt, wt, dh, span, raw);
+                    for (int j = 0, sl = first; j < span; ++j, sl = sl + 1 == window_ ? 0 : sl + 1) {
+                        sc[j] = raw[sl] * scale - slopes_[hd] * static_cast<float>(span - 1 - j);
+                        mx = std::max(mx, sc[j]);
+                    }
+                } else {
+                    // Oldest first, the order of the training mask's row, for the same rounding.
+                    for (int j = 0, sl = first; j < span; ++j, sl = sl + 1 == window_ ? 0 : sl + 1) {
+                        const int age = span - 1 - j;
+                        sc[j] = dot<false>(q, K + sl * d + hd * dh, dh) * scale - slopes_[hd] * static_cast<float>(age);
+                        mx = std::max(mx, sc[j]);
+                    }
                 }
                 if constexpr (Avx) {
                     softmax_avx2(sc, span, mx);
@@ -235,6 +250,16 @@ class EventTransformer {
         const __m128 s2 = _mm_add_ps(s4, _mm_movehl_ps(s4, s4));
         const float inv = 1.0f / _mm_cvtss_f32(_mm_add_ss(s2, _mm_shuffle_ps(s2, s2, 1)));
         for (int j = 0; j < n; ++j) sc[j] *= inv;
+    }
+    // raw[sl] = q . K[sl] for slots 0..n-1, eight slots per vector from the transposed keys.
+    __attribute__((target("avx2,fma"))) static void scores_avx2(const float* q, const float* Kt, int wt, int dh,
+                                                                int n, float* raw) {
+        for (int j = 0; j < n; j += 8) {
+            __m256 acc = _mm256_setzero_ps();
+            for (int i = 0; i < dh; ++i)
+                acc = _mm256_fmadd_ps(_mm256_set1_ps(q[i]), _mm256_loadu_ps(Kt + i * wt + j), acc);
+            _mm256_store_ps(raw + j, acc);
+        }
     }
     __attribute__((target("avx2,fma"))) void accumulate_avx2(const float* p, const float* V, int first, int span,
                                                              int d, int off, int dh, float* y) const {
