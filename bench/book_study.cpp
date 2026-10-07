@@ -16,12 +16,11 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
-#include <functional>
 #include <memory>
-#include <queue>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -96,42 +95,19 @@ void decode(const std::filesystem::path& dir, const std::vector<std::uint16_t>& 
 }
 
 // Decode thread alone: every chunk is decompressed before the clock starts, then the timed
-// loop merges the symbols back into feed order and decodes, as MergedReader's consumer does.
+// loop merges the symbols back into feed order and decodes.
 void decode_only(const std::filesystem::path& dir, const std::vector<std::uint16_t>& locs, int reps) {
-    struct Msg {
-        std::uint64_t seq;
-        std::uint64_t off;
-        std::uint16_t len;
-    };
-    struct Sym {
-        std::vector<std::uint8_t> bytes;
-        std::vector<Msg> msgs;
-    };
-    std::vector<Sym> syms(locs.size());
-    for (std::size_t i = 0; i < locs.size(); ++i) {
-        data::SymbolReader rd(dir, locs[i]);
-        data::Record rec{};
-        while (rd.next(rec)) {
-            syms[i].msgs.push_back({rec.seq, syms[i].bytes.size(), rec.len});
-            syms[i].bytes.insert(syms[i].bytes.end(), rec.data, rec.data + rec.len);
-        }
-    }
-    using Head = std::pair<std::uint64_t, std::uint32_t>;
     for (int r = 0; r <= reps; ++r) {
+        data::MergedReader rd(dir, locs, SIZE_MAX);
+        rd.wait_read_ahead();
+        data::Record rec{};
+        std::uint16_t loc;
         Checksum cs;
         std::uint64_t n = 0;
-        std::vector<std::size_t> pos(syms.size(), 0);
         const auto t0 = std::chrono::steady_clock::now();
-        std::priority_queue<Head, std::vector<Head>, std::greater<>> heap;
-        for (std::uint32_t i = 0; i < syms.size(); ++i)
-            if (!syms[i].msgs.empty()) heap.push({syms[i].msgs[0].seq, i});
-        while (!heap.empty()) {
-            const std::uint32_t i = heap.top().second;
-            heap.pop();
-            const Msg& m = syms[i].msgs[pos[i]];
-            itch::dispatch(syms[i].bytes.data() + m.off, m.len, cs);
+        while (rd.next(rec, loc)) {
+            itch::dispatch(rec.data, rec.len, cs);
             ++n;
-            if (++pos[i] < syms[i].msgs.size()) heap.push({syms[i].msgs[pos[i]].seq, i});
         }
         const double s = secs(t0, std::chrono::steady_clock::now());
         if (r > 0)

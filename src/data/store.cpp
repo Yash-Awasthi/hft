@@ -3,11 +3,13 @@
 #include <zstd.h>
 
 #include <algorithm>
+#include <bit>
 #include <cstdio>
 #include <cstring>
 #include <functional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace hft::data {
 
@@ -165,20 +167,22 @@ bool SymbolReader::next(Record& out) {
 
 MergedReader::MergedReader(const std::filesystem::path& dir, std::vector<std::uint16_t> locates,
                            std::size_t ahead)
-    : ahead_(ahead ? ahead : 1) {
-    std::vector<Pending> order;
+    : ahead_(ahead ? ahead : 1),
+      slots_(kWindow),
+      bits_(kWindow / 64, 0),
+      word_(kWindow / 64) {
     for (std::uint16_t loc : locates) {
         auto idx = read_index(dir, loc);
         if (idx.empty()) continue;
         const auto sym = static_cast<std::uint32_t>(syms_.size());
-        for (const IndexEntry& e : idx) order.push_back({e.first_seq, sym, e});
+        for (const IndexEntry& e : idx) order_.push_back({e.first_seq, sym, e});
         heap_.push_back({idx[0].first_seq, sym});
         syms_.push_back(Sym{loc, path_for(dir, loc, ".zst"), idx, {}, 0, 0});
     }
-    std::sort(order.begin(), order.end(),
+    std::sort(order_.begin(), order_.end(),
               [](const Pending& a, const Pending& b) { return a.first_seq < b.first_seq; });
     std::make_heap(heap_.begin(), heap_.end(), std::greater<>());
-    thread_ = std::thread([this, order = std::move(order)] { run(order); });
+    thread_ = std::thread([this] { run(); });
 }
 
 MergedReader::~MergedReader() {
@@ -190,10 +194,10 @@ MergedReader::~MergedReader() {
     thread_.join();
 }
 
-void MergedReader::run(const std::vector<Pending>& order) {
+void MergedReader::run() {
     try {
         std::vector<std::uint8_t> comp;
-        for (const Pending& p : order) {
+        for (const Pending& p : order_) {
             std::vector<std::uint8_t> raw;
             {
                 std::unique_lock lock(mu_);
@@ -216,40 +220,89 @@ void MergedReader::run(const std::vector<Pending>& order) {
     }
 }
 
-void MergedReader::take_chunk(Sym& s, std::uint32_t sym) {
+void MergedReader::take_chunk(std::uint32_t sym) {
     std::unique_lock lock(mu_);
     data_.wait(lock, [this] { return !ready_.empty() || error_; });
     if (ready_.empty()) std::rethrow_exception(error_);
     if (ready_.front().sym != sym) throw std::logic_error("chunks out of order");
-    spare_.push_back(std::move(s.raw));
-    s.raw = std::move(ready_.front().raw);
+    syms_[sym].bufs.push_back(std::move(ready_.front().raw));
     ready_.pop_front();
     space_.notify_one();
-    s.pos = 0;
-    ++s.chunk;
+    ++syms_[sym].chunk;
+}
+
+void MergedReader::wait_read_ahead() {
+    if (ahead_ < order_.size()) throw std::logic_error("read-ahead smaller than the chunk count");
+    std::unique_lock lock(mu_);
+    data_.wait(lock, [this] { return taken_ + ready_.size() == order_.size() || error_; });
+    if (error_) std::rethrow_exception(error_);
+}
+
+// Scatters every record with a sequence number in [base, base + kWindow) into the window.
+// base is the smallest next sequence number, and every chunk starting below the window's
+// end is taken first, so each symbol's records for the window are already in memory.
+bool MergedReader::fill() {
+    if (!retired_.empty()) {
+        std::lock_guard lock(mu_);
+        for (auto& b : retired_) spare_.push_back(std::move(b));
+        retired_.clear();
+    }
+    if (heap_.empty()) return false;
+    base_ = heap_.front().seq;
+    const std::uint64_t end = base_ + kWindow;
+    while (taken_ < order_.size() && order_[taken_].first_seq < end)
+        take_chunk(order_[taken_++].sym);
+
+    while (!heap_.empty() && heap_.front().seq < end) {
+        const std::uint32_t sym = heap_.front().sym;
+        Sym& s = syms_[sym];
+        std::uint64_t key = UINT64_MAX;
+        while (!s.bufs.empty()) {
+            if (s.pos >= s.bufs.front().size()) {
+                retired_.push_back(std::move(s.bufs.front()));
+                s.bufs.pop_front();
+                s.pos = 0;
+                continue;
+            }
+            Record rec{};
+            if (!parse_record(s.bufs.front(), s.pos, rec)) throw std::runtime_error("corrupt record");
+            if (rec.seq >= end) {
+                key = rec.seq;
+                break;
+            }
+            const std::uint64_t i = rec.seq - base_;
+            if (rec.seq < base_ || bits_[i / 64] >> (i % 64) & 1)
+                throw std::runtime_error("sequence numbers not increasing");
+            slots_[i] = {rec.data, rec.len, sym};
+            bits_[i / 64] |= std::uint64_t{1} << (i % 64);
+            s.pos += kRecordHeader + rec.len;
+        }
+        if (s.bufs.empty() && s.chunk < s.idx.size()) key = s.idx[s.chunk].first_seq;
+        if (key == UINT64_MAX) {
+            std::pop_heap(heap_.begin(), heap_.end(), std::greater<>());
+            heap_.pop_back();
+        } else {
+            sift_down(Head{key, sym});
+        }
+    }
+    word_ = 0;
+    cur_ = std::exchange(bits_[0], 0);
+    return true;
 }
 
 bool MergedReader::next(Record& out, std::uint16_t& locate) {
-    if (heap_.empty()) return false;
-    const std::uint32_t sym = heap_.front().sym;
-    Sym& s = syms_[sym];
-    if (s.pos >= s.raw.size()) take_chunk(s, sym);
-    if (!parse_record(s.raw, s.pos, out)) throw std::runtime_error("corrupt record");
-    s.pos += kRecordHeader + out.len;
-    locate = s.locate;
-
-    // Replace the top in place: one sift-down instead of a pop and a push.
-    std::uint64_t key;
-    if (s.pos < s.raw.size()) {
-        std::memcpy(&key, &s.raw[s.pos], 8);
-    } else if (s.chunk < s.idx.size()) {
-        key = s.idx[s.chunk].first_seq;
-    } else {
-        std::pop_heap(heap_.begin(), heap_.end(), std::greater<>());
-        heap_.pop_back();
-        return true;
+    while (cur_ == 0) {
+        if (++word_ < bits_.size()) {
+            cur_ = std::exchange(bits_[word_], 0);
+        } else if (!fill()) {
+            return false;
+        }
     }
-    sift_down(Head{key, sym});
+    const std::size_t i = word_ * 64 + static_cast<std::size_t>(std::countr_zero(cur_));
+    cur_ &= cur_ - 1;
+    const Slot& sl = slots_[i];
+    out = {base_ + i, sl.data, sl.len};
+    locate = syms_[sl.sym].locate;
     return true;
 }
 
