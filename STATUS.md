@@ -18,16 +18,17 @@ task finishes or blocks.
 - [x] Differential tests: random sequences (RapidCheck) and store slices, identical BBO
 - [x] Replay app over the store: invariants, share conservation, persistent-cross check
 - [x] Independent Python reference book compared on sampled symbols
-- [ ] Order-ID map variants: linear probing (done), Robin Hood (done), direct-mapped window
-      + fallback
-- [ ] Order layout variants: hot/cold, AoS, SoA
+- [x] Order-ID map variants: linear probing, Robin Hood, direct-mapped window + fallback
+- [x] Order layout variants: hot/cold, AoS, SoA
 - [x] Counting allocator test: zero heap allocation after startup
-- [ ] Timing: rdtscp/lfence, HDR histogram, perf_event_open regions, cachegrind counts
-- [ ] Benchmarks: read+decode, book update, full-day 50-stock replay
+- [x] Timing: rdtscp/lfence, HDR histogram, perf_event_open regions, cachegrind counts
+- [ ] Benchmarks: read+decode, book update, full-day 50-stock replay (first baseline done;
+      book update misses its target, optimisation in progress)
 - [x] Book checkpoints every N events (D2) with verification
-- [ ] Merged multi-symbol replay source with a read-ahead decompression thread
-- [ ] Stretch: B-tree and sorted-vector books
-- [ ] MS1 leftover: field-level comparison against a third-party ITCH parser
+- [x] Merged multi-symbol replay source with a read-ahead decompression thread
+- [x] Stretch: B-tree and sorted-vector books
+- [x] MS1 leftover: field-level comparison against a third-party ITCH parser
+- [x] Nightly script (`scripts/nightly.sh`); the runner itself needs registration
 
 ### Background
 
@@ -49,7 +50,9 @@ task finishes or blocks.
 
 | Milestone | Metric | Target | Measured | Evidence |
 |-----------|--------|--------|----------|----------|
-| MS2 | BBO stream, tick book vs std::map, 2025-11-28, all 12,076 symbols | identical | identical (per-symbol FNV hashes, 353M messages) | `book_replay <store> map|tick|tick-rh` |
+| MS2 | BBO stream, 7 books vs std::map, 2025-11-28, all 12,076 symbols | identical | identical (per-symbol FNV hashes, 353M messages): tick, tick-rh, tick-dm, tick-aos, tick-soa, sorted vector, B-tree | `book_replay <store> <book>` |
+| MS1 | Fields vs itchfeed 1.6.4 (third party) | identical | 12M messages in 5 slices (open, mid-day, cross, close), 0 mismatches | `research/compare_itchfeed.py` |
+| MS1 | Merged store stream vs decompressed download | identical | SHA-256 e115c7e4... matches `zcat` | `store_cat <store> \| sha256sum` |
 | MS2 | Python reference vs C++ on sampled symbols | identical | 201 sampled + GOOGL (5.2M messages) identical | `research/compare_ref.py <store> <table> 200 2` |
 | MS2 | Invariants every event | 0 failures | 0 on 255M book events (11,778 symbols); 0 at every 1,000 events on all symbols | `CHECK_EVERY=1 book_replay` |
 | MS2 | Persistent cross in trading state | none over 100 ms | longest 1.4 ms (SMX, post-halt uncross) | `book_replay` max_cross_ms |
