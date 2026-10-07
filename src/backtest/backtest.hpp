@@ -53,6 +53,7 @@ struct Working {
     std::uint32_t price;
     std::uint32_t open;
     bool cancel_sent = false;
+    bool ioc = false;  // a take: counts against the position limit until its report returns
 };
 
 // Everything the strategy may look at when it decides: no exchange-side state.
@@ -92,6 +93,9 @@ class Backtest {
    public:
     Backtest(Config c, Strategy& s)
         : c_(c), s_(s), x_(c.exchange, c.fill_rule, 1 << 16), risk_(c.risk) {}
+
+    // Quote changes within this many ticks of a working order keep the order (churn control).
+    void set_hysteresis(std::uint32_t ticks) { hysteresis_ = ticks; }
 
     // target: the traded symbol's locate; index: locates feeding cross-asset features.
     Summary run(const std::string& store, std::uint16_t target, std::vector<std::uint16_t> index) {
@@ -238,7 +242,9 @@ class Backtest {
 
     // After the quoting window: no quotes, inventory taken out against the book.
     void flatten(const View& v, Desired& d) {
-        if (inventory_ == 0 || flatten_pending_) return;
+        const bool take_in_flight =
+            std::any_of(working_.begin(), working_.end(), [](const Working& w) { return w.ioc; });
+        if (inventory_ == 0 || take_in_flight) return;
         const book::Bbo b = v.book.bbo();
         if (!b.bid_px || !b.ask_px) return;
         d.take_side = inventory_ > 0 ? -1 : 1;
@@ -246,7 +252,6 @@ class Backtest {
             std::min<std::int64_t>(std::abs(inventory_), c_.risk.max_order));
         d.take_limit =
             inventory_ > 0 ? b.bid_px - 5 * c_.exchange.tick : b.ask_px + 5 * c_.exchange.tick;
-        flatten_pending_ = true;
     }
 
     // Turns the desired quotes into cancels and new orders; same-price orders are kept.
@@ -257,8 +262,10 @@ class Backtest {
             const std::uint32_t qty = side == Side::Buy ? d.bid_qty : d.ask_qty;
             bool have = false;
             for (Working& w : working_) {
-                if (w.side != side || w.cancel_sent) continue;
-                if (qty && w.price == px && !have) {
+                if (w.side != side || w.cancel_sent || w.ioc) continue;
+                // Hysteresis: an order within `hysteresis` ticks of the target stays.
+                const std::uint32_t gap = w.price > px ? w.price - px : px - w.price;
+                if (qty && gap <= hysteresis_ * c_.exchange.tick && !have) {
                     have = true;
                     continue;
                 }
@@ -284,7 +291,7 @@ class Backtest {
             return;
         }
         const std::uint64_t tag = ++next_tag_;
-        if (tif == engine::Tif::Day) working_.push_back({0, tag, side, px, qty});
+        working_.push_back({0, tag, side, px, qty, false, tif == engine::Tif::Ioc});
         send({false, tag, 0, {1, side, px, qty, tif, post_only}});
         ++sum_.orders;
     }
@@ -337,13 +344,10 @@ class Backtest {
             if (w) {
                 sum_.fills_during_cancel += w->cancel_sent;
                 w->open -= std::min(w->open, e.qty);
-            } else if (!e.maker) {
-                flatten_pending_ = false;  // a take came back
             }
         } else if (e.type == engine::EventType::Cancelled ||
                    e.type == engine::EventType::Rejected) {
             if (w) w->open = 0;
-            if (!e.maker && e.reason == engine::Reason::Ioc) flatten_pending_ = false;
         }
         std::erase_if(working_, [](const Working& x) { return x.ref && x.open == 0; });
         std::erase_if(working_, [&](const Working& x) {
@@ -367,7 +371,7 @@ class Backtest {
     std::unordered_map<std::uint64_t, std::uint64_t> exchange_ref_;  // our tag -> exchange ref
     std::int64_t inventory_ = 0;  // as the strategy knows it from reports
     std::uint64_t next_tag_ = 0, now_ = 0;
-    bool flatten_pending_ = false;
+    std::uint32_t hysteresis_ = 0;
     book::Bbo last_{};
     Summary sum_;
 };

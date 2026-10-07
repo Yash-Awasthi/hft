@@ -3,6 +3,7 @@
 
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
+#include <nanobind/stl/map.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
@@ -12,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "backtest/strategies.hpp"
 #include "book/itch_apply.hpp"
 #include "book/tick_book.hpp"
 #include "data/store.hpp"
@@ -229,6 +231,128 @@ nb::dict lifecycles(const std::string& store, std::uint16_t locate, std::uint64_
     return d;
 }
 
+double param(const std::map<std::string, double>& p, const char* k, double def) {
+    const auto it = p.find(k);
+    return it == p.end() ? def : it->second;
+}
+
+template <class S>
+backtest::Summary run_one(backtest::Config c, S& s, const std::string& store, std::uint16_t target,
+                          std::vector<std::uint16_t> index, std::uint32_t hysteresis) {
+    backtest::Backtest<S> bt(c, s);
+    bt.set_hysteresis(hysteresis);
+    return bt.run(store, target, std::move(index));
+}
+
+// Runs one strategy on one symbol-day. cfg keys: tick, maker_rebate, taker_fee, fill_rule
+// (0 queue, 1 trade-through), market_data_ns, order_entry_ns, processing_ns, start_ns, stop_ns,
+// end_ns, sec_fee_per_million, taf_per_share, taf_max, max_position, max_order, collar_ticks.
+nb::dict backtest_run(const std::string& store, std::uint16_t target,
+                      std::vector<std::uint16_t> index, const std::string& name,
+                      std::map<std::string, double> params, std::map<std::string, double> cfg) {
+    backtest::Config c;
+    c.exchange.tick = static_cast<std::uint32_t>(param(cfg, "tick", 100));
+    c.exchange.maker_rebate = static_cast<std::int64_t>(param(cfg, "maker_rebate", 0));
+    c.exchange.taker_fee = static_cast<std::int64_t>(param(cfg, "taker_fee", 0));
+    c.fill_rule =
+        param(cfg, "fill_rule", 0) ? engine::FillRule::TradeThrough : engine::FillRule::Queue;
+    c.market_data_ns = static_cast<std::uint64_t>(param(cfg, "market_data_ns", 0));
+    c.order_entry_ns = static_cast<std::uint64_t>(param(cfg, "order_entry_ns", 0));
+    c.processing_ns = static_cast<std::uint64_t>(param(cfg, "processing_ns", 0));
+    c.start_ns =
+        static_cast<std::uint64_t>(param(cfg, "start_ns", static_cast<double>(c.start_ns)));
+    c.stop_ns = static_cast<std::uint64_t>(param(cfg, "stop_ns", static_cast<double>(c.stop_ns)));
+    c.end_ns = static_cast<std::uint64_t>(param(cfg, "end_ns", static_cast<double>(c.end_ns)));
+    c.sec_fee_per_million = static_cast<std::int64_t>(param(cfg, "sec_fee_per_million", 0));
+    c.taf_per_share = static_cast<std::int64_t>(param(cfg, "taf_per_share", 0));
+    c.taf_max = static_cast<std::int64_t>(param(cfg, "taf_max", 0));
+    c.risk.max_position = static_cast<std::int64_t>(param(cfg, "max_position", 1000));
+    c.risk.max_order = static_cast<std::uint32_t>(param(cfg, "max_order", 500));
+    c.risk.collar_ticks = static_cast<std::uint32_t>(param(cfg, "collar_ticks", 20));
+    const auto size = static_cast<std::uint32_t>(param(params, "size", 100));
+    const auto max_inv = static_cast<std::int64_t>(param(params, "max_inventory", 500));
+    const auto hysteresis = static_cast<std::uint32_t>(param(params, "hysteresis_ticks", 0));
+
+    backtest::Summary r;
+    {
+        nb::gil_scoped_release release;
+        if (name == "zero") {
+            backtest::Zero s;
+            r = run_one(c, s, store, target, index, hysteresis);
+        } else if (name == "naive") {
+            backtest::NaiveJoin s{size, max_inv};
+            r = run_one(c, s, store, target, index, hysteresis);
+        } else if (name == "random_taker") {
+            backtest::RandomTaker s;
+            s.rate = param(params, "rate", 0.001);
+            s.size = size;
+            r = run_one(c, s, store, target, index, hysteresis);
+        } else if (name == "random_passive") {
+            backtest::RandomPassive s;
+            s.size = size;
+            r = run_one(c, s, store, target, index, hysteresis);
+        } else if (name == "perfect_foresight") {
+            backtest::PerfectForesight s;
+            // Mid series from the labeler path: the strategy alone may read the future.
+            book::TickBook<> b(4096);
+            book::ItchApply<book::TickBook<>> ap{b};
+            data::SymbolReader rd(store, target);
+            data::Record rec{};
+            while (rd.next(rec)) {
+                itch::dispatch(rec.data, rec.len, ap);
+                const book::Bbo q = b.bbo();
+                if (!q.bid_px || !q.ask_px || q.ask_px <= q.bid_px) continue;
+                s.ts.push_back(itch::detail::read_header(rec.data).timestamp);
+                s.mid.push_back((static_cast<double>(q.bid_px) + q.ask_px) /
+                                (2.0 * c.exchange.tick));
+            }
+            s.horizon_ns = static_cast<std::uint64_t>(param(params, "horizon_ns", 1e9));
+            s.cost_ticks = param(params, "cost_ticks", 0.3);
+            s.size = size;
+            r = run_one(c, s, store, target, index, hysteresis);
+        } else if (name == "avellaneda_stoikov") {
+            backtest::AvellanedaStoikov s;
+            s.gamma = param(params, "gamma", 0.1);
+            s.A = param(params, "A", 1.0);
+            s.k = param(params, "k", 1.5);
+            s.glft = param(params, "glft", 1) != 0;
+            s.size = size;
+            s.max_inventory = max_inv;
+            s.end_ns = c.end_ns;
+            s.tick = c.exchange.tick;
+            r = run_one(c, s, store, target, index, hysteresis);
+        } else {
+            throw std::invalid_argument("unknown strategy " + name);
+        }
+    }
+    nb::dict d;
+    d["total"] = r.total;
+    d["spread"] = r.spread;
+    d["inventory_pnl"] = r.inventory_pnl;
+    d["fees"] = r.fees;
+    d["adverse"] = r.adverse;
+    d["end_inventory"] = r.end_inventory;
+    d["max_abs_inventory"] = r.max_abs_inventory;
+    d["volume"] = r.volume;
+    d["fills"] = r.fills;
+    d["orders"] = r.orders;
+    d["cancels"] = r.cancels;
+    d["rejects"] = r.rejects;
+    d["events"] = r.events;
+    d["fills_during_cancel"] = r.fills_during_cancel;
+    d["diverted"] = r.divergence.diverted;
+    d["taken"] = r.divergence.taken;
+    d["through_fills"] = r.divergence.through_fills;
+    d["hidden_fills"] = r.divergence.hidden_fills;
+    const std::size_t n = r.fill_ts.size(), mins = r.minute_pnl.size();
+    d["minute_pnl"] = array(std::move(r.minute_pnl), mins);
+    d["fill_ts"] = array(std::move(r.fill_ts), n);
+    d["fill_signed_shares"] = array(std::move(r.fill_signed_shares), n);
+    d["fill_price"] = array(std::move(r.fill_price), n);
+    d["fill_maker"] = array(std::move(r.fill_maker), n);
+    return d;
+}
+
 }  // namespace
 
 NB_MODULE(hftpy, m) {
@@ -239,6 +363,8 @@ NB_MODULE(hftpy, m) {
           nb::arg("clock_h_ns"), nb::arg("tick") = 100);
     m.def("lifecycles", &lifecycles, nb::arg("store"), nb::arg("locate"), nb::arg("sample_one_in"),
           nb::arg("horizon_s"), nb::arg("taus_s"));
+    m.def("backtest", &backtest_run, nb::arg("store"), nb::arg("target"), nb::arg("index"),
+          nb::arg("strategy"), nb::arg("params"), nb::arg("config"));
     m.attr("lifecycle_covariates") =
         nb::make_tuple("queue_ahead", "opposite_qty", "imbalance", "spread_ticks", "volatility",
                        "ofi_signal", "shares");

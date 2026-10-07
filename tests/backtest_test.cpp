@@ -82,3 +82,54 @@ TEST(Backtest, RandomTakingLosesAboutHalfTheSpreadPlusFees) {
     EXPECT_LT(s.spread, 0);  // every take pays half the spread
     EXPECT_LT(s.fees, 0);
 }
+
+// The GLFT quotes widen against inventory: a long position lowers both quotes.
+TEST(Strategies, AvellanedaStoikovSkewsAgainstInventory) {
+    book::TickBook<> b;
+    b.add(1, Side::Buy, 100, 10'0000, 1);
+    b.add(2, Side::Sell, 100, 10'0500, 2);
+    std::vector<Working> w;
+    AvellanedaStoikov as;
+    as.var = 4.0;
+    as.last_mid = 1002.5;
+    as.last_ts = 1;
+    Desired flat, longer;
+    as.decide(View{2, b, nullptr, 0, 1002.5, 0, w, true}, flat);
+    as.last_ts = 1;
+    as.decide(View{2, b, nullptr, 0, 1002.5, 300, w, true}, longer);
+    EXPECT_LT(longer.bid_px, flat.bid_px);
+    EXPECT_LE(longer.ask_px, flat.ask_px);
+    EXPECT_LT(flat.bid_px, flat.ask_px);
+    EXPECT_LE(flat.ask_px, 10'0500u + 1000u);
+}
+
+// In-flight takes count against the position limit until their reports come back.
+TEST(Backtest, PositionLimitHoldsWithTakesInFlight) {
+    FixtureStore fx;
+    RandomTaker r;
+    r.rate = 0.5;
+    r.size = 300;
+    Config c = window();
+    c.risk.max_position = 600;
+    c.order_entry_ns = 2'000'000;  // long round trip: many decisions per report
+    c.risk.max_msgs_per_s = 1e6;
+    c.risk.burst = 1e6;
+    Backtest<RandomTaker> bt(c, r);
+    const Summary s = bt.run(fx.dir.path.string(), 1, {3});
+    ASSERT_GT(s.volume, 0);
+    EXPECT_LE(s.max_abs_inventory, 600);
+}
+
+TEST(Backtest, HysteresisCutsQuoteChurn) {
+    FixtureStore fx;
+    auto orders = [&](std::uint32_t h) {
+        AvellanedaStoikov as;
+        as.end_ns = window().end_ns;
+        Backtest<AvellanedaStoikov> bt(window(), as);
+        bt.set_hysteresis(h);
+        return bt.run(fx.dir.path.string(), 1, {3}).orders;
+    };
+    const auto churn = orders(0), calm = orders(3);
+    EXPECT_GT(churn, 0u);
+    EXPECT_LT(calm, churn);
+}
