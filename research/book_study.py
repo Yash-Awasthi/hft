@@ -5,7 +5,8 @@ Usage: python research/book_study.py <csv> [<csv> ...] [--cg <variant>=<cachegri
 Per variant: median across repetitions of the per-event p50 / p99 / p99.9 latency and of the
 batch cost per event, with 95% bootstrap intervals of the median, and a two-sided
 Mann-Whitney test of the batch cost against the `tick` variant. Cachegrind files add
-instructions and simulated cache misses per event (the region between the client requests).
+instructions and simulated cache misses per event (the region between the client requests);
+the event count is read from the book_study output saved beside each file as .txt.
 """
 
 import csv
@@ -37,6 +38,14 @@ def cachegrind(path):
             elif line.startswith("summary:"):
                 totals = dict(zip(events, map(int, line.split()[1:])))
     return totals
+
+
+def cg_events(path):
+    with open(path.rsplit(".", 1)[0] + ".txt") as f:
+        for line in f:
+            if line.startswith("events "):
+                return int(line.split()[1])
+    raise ValueError(f"no event count beside {path}")
 
 
 def main():
@@ -79,10 +88,11 @@ def main():
         ir = d1 = ll = "-"
         if v in cg:
             t = cachegrind(cg[v])
-            ir = f"{t['Ir'] / n:.0f}"
+            m = cg_events(cg[v])
+            ir = f"{t['Ir'] / m:.0f}"
             if "D1mr" in t:
-                d1 = f"{(t['D1mr'] + t['D1mw']) / n:.2f}"
-                ll = f"{(t['DLmr'] + t['DLmw']) / n:.3f}"
+                d1 = f"{(t['D1mr'] + t['D1mw']) / m:.2f}"
+                ll = f"{(t['DLmr'] + t['DLmw']) / m:.3f}"
         errors = max(int(x["check"]) for x in r)
         print(f"| {v} | {fmt(*boot_median(batch[v]))} | {col('p50_ns')} | {col('p99_ns')} "
               f"| {col('p999_ns')} | {p} | {ir} | {d1} | {ll} | {errors} |")

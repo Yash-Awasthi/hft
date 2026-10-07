@@ -80,6 +80,12 @@ class Pool {
         PoolStats::bytes += map_len;
     }
 
+    // Copies the first n elements of `o`, growing this pool if needed.
+    void copy_from(const Pool& o, std::size_t n) {
+        reserve(n);
+        if (n) std::memcpy(data_, o.data_, n * sizeof(T));
+    }
+
    private:
     static constexpr std::size_t kHuge = 2u << 20;
 

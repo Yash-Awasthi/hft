@@ -18,7 +18,8 @@ class MapBook {
    public:
     bool add(std::uint64_t ref, Side side, std::uint32_t shares, std::uint32_t price,
              std::uint64_t seq) {
-        if (shares == 0 || !valid_price(price) || orders_.contains(ref)) return false;
+        if (shares == 0 || !valid_price(price) || ref >= kMaxRef || orders_.contains(ref))
+            return false;
         Level& l = side == Side::Buy ? bids_[price] : asks_[price];
         l.qty += shares;
         l.queue.push_back(ref);
@@ -40,7 +41,7 @@ class MapBook {
                  std::uint32_t price, std::uint64_t seq) {
         auto it = orders_.find(old_ref);
         if (it == orders_.end() || shares == 0 || !valid_price(price)) return false;
-        if (new_ref != old_ref && orders_.contains(new_ref)) return false;
+        if (new_ref >= kMaxRef || (new_ref != old_ref && orders_.contains(new_ref))) return false;
         const Side side = it->second.side;
         remove(it);
         return add(new_ref, side, shares, price, seq);

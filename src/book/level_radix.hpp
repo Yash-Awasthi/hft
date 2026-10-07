@@ -112,6 +112,18 @@ class LevelRadix {
         });
     }
 
+    void copy_from(const LevelRadix& o) {
+        std::memcpy(top_, o.top_, sizeof top_);
+        std::memcpy(top_bits_, o.top_bits_, sizeof top_bits_);
+        mids_.copy_from(o.mids_, o.used_mids_);
+        pages_.copy_from(o.pages_, o.used_pages_);
+        free_mid_ = o.free_mid_;
+        free_page_ = o.free_page_;
+        used_mids_ = o.used_mids_;
+        used_pages_ = o.used_pages_;
+        count_ = o.count_;
+    }
+
     void save(std::vector<std::uint8_t>& out) const {
         const std::uint32_t head[5] = {free_mid_, free_page_, used_mids_, used_pages_,
                                        static_cast<std::uint32_t>(count_)};

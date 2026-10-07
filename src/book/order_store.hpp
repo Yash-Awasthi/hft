@@ -53,6 +53,10 @@ class HotCold {
         hot_[i] = {px, qty, next, prev};
         cold_[i] = {ref, seq};
     }
+    void copy_from(const HotCold& o, std::size_t used) {
+        hot_.copy_from(o.hot_, used);
+        cold_.copy_from(o.cold_, used);
+    }
     void save(std::vector<std::uint8_t>& out, std::size_t used) const {
         detail::put(out, hot_.data(), used * sizeof(Hot));
         detail::put(out, cold_.data(), used * sizeof(Cold));
@@ -93,6 +97,7 @@ class Aos {
              std::uint32_t prev, std::uint64_t ref, std::uint64_t seq) {
         o_[i] = {px, qty, next, prev, ref, seq};
     }
+    void copy_from(const Aos& o, std::size_t used) { o_.copy_from(o.o_, used); }
     void save(std::vector<std::uint8_t>& out, std::size_t used) const {
         detail::put(out, o_.data(), used * sizeof(Order));
     }
@@ -144,6 +149,14 @@ class Soa {
         prev_[i] = prev;
         ref_[i] = ref;
         seq_[i] = seq;
+    }
+    void copy_from(const Soa& o, std::size_t used) {
+        px_.copy_from(o.px_, used);
+        qty_.copy_from(o.qty_, used);
+        next_.copy_from(o.next_, used);
+        prev_.copy_from(o.prev_, used);
+        ref_.copy_from(o.ref_, used);
+        seq_.copy_from(o.seq_, used);
     }
     void save(std::vector<std::uint8_t>& out, std::size_t used) const {
         detail::put(out, px_.data(), used * 4);

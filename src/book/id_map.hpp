@@ -1,7 +1,7 @@
 #pragma once
 
-// Order-ID maps from a 64-bit ITCH reference to a 32-bit order index. Both are open
-// addressing over a power-of-two table, kept at most half full, with backward-shift
+// Order-ID maps from an ITCH reference (below kMaxRef) to an order index (below 2^24).
+// Open addressing over a power-of-two table, kept at most half full, with backward-shift
 // deletion so no tombstones build up over a day.
 
 #include <bit>
@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "book/order_store.hpp"
+#include "book/types.hpp"
 #include "core/pool.hpp"
 
 namespace hft::book {
@@ -19,12 +20,17 @@ inline constexpr std::uint32_t kNoOrder = 0xffffffffu;
 
 namespace detail {
 
+// Key (40 bits) and order index (24 bits) packed in 8 bytes; all ones marks an empty slot,
+// so the largest key is reserved.
 struct Slot {
-    std::uint64_t key;
-    std::uint32_t val;
-    std::uint32_t pad;
+    std::uint64_t bits;
+    static Slot make(std::uint64_t key, std::uint32_t val) { return {key << 24 | val}; }
+    std::uint64_t key() const { return bits >> 24; }
+    std::uint32_t val() const { return static_cast<std::uint32_t>(bits & 0xffffff); }
+    bool empty() const { return bits == ~0ull; }
+    void clear() { bits = ~0ull; }
 };
-inline constexpr std::uint64_t kEmpty = ~0ull;
+static_assert(sizeof(Slot) == 8);
 
 // Shared table storage; Derived supplies insert, find and erase.
 class Table {
@@ -35,15 +41,21 @@ class Table {
     std::size_t size() const { return size_; }
     std::size_t capacity() const { return mask_ + 1; }
     void clear() {
-        for (std::size_t i = 0; i <= mask_; ++i) slots_[i].key = kEmpty;
+        for (std::size_t i = 0; i <= mask_; ++i) slots_[i].clear();
         size_ = 0;
     }
     void prefetch(std::uint64_t key) const { __builtin_prefetch(&slots_[home(key)]); }
 
+    void copy_from(const Table& o) {
+        if (capacity() != o.capacity()) rebuild(o.capacity());
+        slots_.copy_from(o.slots_, o.capacity());
+        size_ = o.size_;
+    }
+
     template <class F>
     void for_each(F&& f) const {
         for (std::size_t i = 0; i <= mask_; ++i)
-            if (slots_[i].key != kEmpty) f(slots_[i].key, slots_[i].val);
+            if (!slots_[i].empty()) f(slots_[i].key(), slots_[i].val());
     }
 
     // Raw table image, so a loaded map probes exactly like the saved one.
@@ -77,7 +89,7 @@ class Table {
         slots_ = Pool<Slot>(cap);
         mask_ = cap - 1;
         shift_ = 64 - std::countr_zero(cap);
-        for (std::size_t i = 0; i < cap; ++i) slots_[i].key = kEmpty;
+        for (std::size_t i = 0; i < cap; ++i) slots_[i].clear();
     }
 
     Pool<Slot> slots_;
@@ -95,8 +107,8 @@ class LinearMap : public detail::Table {
     std::uint32_t find(std::uint64_t key) const {
         for (std::size_t i = home(key);; i = (i + 1) & mask_) {
             const detail::Slot& s = slots_[i];
-            if (s.key == key) return s.val;
-            if (s.key == detail::kEmpty) return kNoOrder;
+            if (s.key() == key) return s.val();
+            if (s.empty()) return kNoOrder;
         }
     }
 
@@ -104,26 +116,25 @@ class LinearMap : public detail::Table {
     void insert(std::uint64_t key, std::uint32_t val) {
         if ((size_ + 1) * 2 > capacity()) grow();
         std::size_t i = home(key);
-        while (slots_[i].key != detail::kEmpty) i = (i + 1) & mask_;
-        slots_[i] = {key, val, 0};
+        while (!slots_[i].empty()) i = (i + 1) & mask_;
+        slots_[i] = detail::Slot::make(key, val);
         ++size_;
     }
 
     bool erase(std::uint64_t key) {
         std::size_t i = home(key);
         for (;; i = (i + 1) & mask_) {
-            if (slots_[i].key == key) break;
-            if (slots_[i].key == detail::kEmpty) return false;
+            if (slots_[i].key() == key) break;
+            if (slots_[i].empty()) return false;
         }
         // Pull back any later entry whose probe path crosses the hole.
-        for (std::size_t j = (i + 1) & mask_; slots_[j].key != detail::kEmpty;
-             j = (j + 1) & mask_) {
-            if (dist(j, slots_[j].key) >= ((j - i) & mask_)) {
+        for (std::size_t j = (i + 1) & mask_; !slots_[j].empty(); j = (j + 1) & mask_) {
+            if (dist(j, slots_[j].key()) >= ((j - i) & mask_)) {
                 slots_[i] = slots_[j];
                 i = j;
             }
         }
-        slots_[i].key = detail::kEmpty;
+        slots_[i].clear();
         --size_;
         return true;
     }
@@ -135,7 +146,7 @@ class LinearMap : public detail::Table {
         rebuild(n * 2);
         size_ = 0;
         for (std::size_t i = 0; i < n; ++i)
-            if (old[i].key != detail::kEmpty) insert(old[i].key, old[i].val);
+            if (!old[i].empty()) insert(old[i].key(), old[i].val());
     }
 };
 
@@ -146,21 +157,21 @@ class RobinHoodMap : public detail::Table {
     std::uint32_t find(std::uint64_t key) const {
         for (std::size_t i = home(key), d = 0;; i = (i + 1) & mask_, ++d) {
             const detail::Slot& s = slots_[i];
-            if (s.key == key) return s.val;
-            if (s.key == detail::kEmpty || dist(i, s.key) < d) return kNoOrder;
+            if (s.key() == key) return s.val();
+            if (s.empty() || dist(i, s.key()) < d) return kNoOrder;
         }
     }
 
     void insert(std::uint64_t key, std::uint32_t val) {
         if ((size_ + 1) * 2 > capacity()) grow();
-        detail::Slot cur{key, val, 0};
+        detail::Slot cur = detail::Slot::make(key, val);
         for (std::size_t i = home(key), d = 0;; i = (i + 1) & mask_, ++d) {
             detail::Slot& s = slots_[i];
-            if (s.key == detail::kEmpty) {
+            if (s.empty()) {
                 s = cur;
                 break;
             }
-            const std::size_t sd = dist(i, s.key);
+            const std::size_t sd = dist(i, s.key());
             if (sd < d) {
                 std::swap(s, cur);
                 d = sd;
@@ -173,15 +184,15 @@ class RobinHoodMap : public detail::Table {
         std::size_t i = home(key);
         for (std::size_t d = 0;; i = (i + 1) & mask_, ++d) {
             const detail::Slot& s = slots_[i];
-            if (s.key == key) break;
-            if (s.key == detail::kEmpty || dist(i, s.key) < d) return false;
+            if (s.key() == key) break;
+            if (s.empty() || dist(i, s.key()) < d) return false;
         }
-        for (std::size_t j = (i + 1) & mask_;
-             slots_[j].key != detail::kEmpty && dist(j, slots_[j].key) != 0; j = (j + 1) & mask_) {
+        for (std::size_t j = (i + 1) & mask_; !slots_[j].empty() && dist(j, slots_[j].key()) != 0;
+             j = (j + 1) & mask_) {
             slots_[i] = slots_[j];
             i = j;
         }
-        slots_[i].key = detail::kEmpty;
+        slots_[i].clear();
         --size_;
         return true;
     }
@@ -193,7 +204,7 @@ class RobinHoodMap : public detail::Table {
         rebuild(n * 2);
         size_ = 0;
         for (std::size_t i = 0; i < n; ++i)
-            if (old[i].key != detail::kEmpty) insert(old[i].key, old[i].val);
+            if (!old[i].empty()) insert(old[i].key(), old[i].val());
     }
 };
 
@@ -210,7 +221,7 @@ class DirectMap {
     }
     std::size_t size() const { return direct_ + fallback_.size(); }
     void clear() {
-        for (std::size_t i = 0; i < kSlots; ++i) slots_[i].key = detail::kEmpty;
+        for (std::size_t i = 0; i < kSlots; ++i) slots_[i].clear();
         fallback_.clear();
         direct_ = 0;
     }
@@ -220,25 +231,31 @@ class DirectMap {
         fallback_.prefetch(key);
     }
 
+    void copy_from(const DirectMap& o) {
+        slots_.copy_from(o.slots_, kSlots);
+        fallback_.copy_from(o.fallback_);
+        direct_ = o.direct_;
+    }
+
     std::uint32_t find(std::uint64_t key) const {
         const detail::Slot& s = slots_[key & (kSlots - 1)];
-        if (s.key == key) return s.val;
+        if (s.key() == key) return s.val();
         return fallback_.size() ? fallback_.find(key) : kNoOrder;
     }
 
     void insert(std::uint64_t key, std::uint32_t val) {
         detail::Slot& s = slots_[key & (kSlots - 1)];
-        if (s.key != detail::kEmpty)
-            fallback_.insert(s.key, s.val);
+        if (!s.empty())
+            fallback_.insert(s.key(), s.val());
         else
             ++direct_;
-        s = {key, val, 0};
+        s = detail::Slot::make(key, val);
     }
 
     bool erase(std::uint64_t key) {
         detail::Slot& s = slots_[key & (kSlots - 1)];
-        if (s.key == key) {
-            s.key = detail::kEmpty;
+        if (s.key() == key) {
+            s.clear();
             --direct_;
             return true;
         }
@@ -248,7 +265,7 @@ class DirectMap {
     template <class F>
     void for_each(F&& f) const {
         for (std::size_t i = 0; i < kSlots; ++i)
-            if (slots_[i].key != detail::kEmpty) f(slots_[i].key, slots_[i].val);
+            if (!slots_[i].empty()) f(slots_[i].key(), slots_[i].val());
         fallback_.for_each(f);
     }
 
@@ -261,7 +278,7 @@ class DirectMap {
         std::memcpy(slots_.data(), p, kSlots * sizeof(detail::Slot));
         p += kSlots * sizeof(detail::Slot);
         direct_ = 0;
-        for (std::size_t i = 0; i < kSlots; ++i) direct_ += slots_[i].key != detail::kEmpty;
+        for (std::size_t i = 0; i < kSlots; ++i) direct_ += !slots_[i].empty();
         return fallback_.load(p, end);
     }
 

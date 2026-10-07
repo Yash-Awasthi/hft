@@ -4,6 +4,12 @@
 
 namespace hft::book {
 
+// Order references must be below this (ITCH assigns about 10^9 a day); the ID maps pack them
+// into 40 bits.
+inline constexpr std::uint64_t kMaxRef = (1ull << 40) - 1;
+// Live orders per book are below this; the ID maps pack order indices into 24 bits.
+inline constexpr std::uint32_t kMaxOrders = 1u << 24;
+
 enum class Side : std::uint8_t { Buy, Sell };
 
 // Empty side: price 0 and quantity 0.

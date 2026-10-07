@@ -196,3 +196,36 @@ TYPED_TEST(TickSnapshot, LoadThenReplayMatches) {
     EXPECT_FALSE(b.load(snap.data(), snap.size()));
     EXPECT_FALSE(b.load(sa.data(), sa.size() - 1));
 }
+
+// A fork replayed forward must match the original replayed forward, byte for byte, and the
+// two must not share state.
+TYPED_TEST(TickSnapshot, ForkThenReplayMatches) {
+    TypeParam a(16);
+    auto step = [](TypeParam& b, std::uint64_t i) {
+        const std::uint32_t px = 30'0000 + static_cast<std::uint32_t>(i * 7919 % 4000) * 100;
+        b.add(1 + i, i % 2 ? Side::Sell : Side::Buy, 100, i % 13 == 0 ? px + 7 : px, i);
+        if (i % 3 == 0) b.erase(1 + i / 2);
+        if (i % 5 == 0) b.execute(i, 10);
+    };
+    for (std::uint64_t i = 0; i < 3000; ++i) step(a, i);
+    TypeParam b;
+    b.copy_from(a);
+    EXPECT_TRUE(b.check());
+    for (std::uint64_t i = 3000; i < 6000; ++i) {
+        step(a, i);
+        step(b, i);
+    }
+    std::vector<std::uint8_t> sa, sb;
+    a.save(sa);
+    b.save(sb);
+    EXPECT_EQ(sa, sb);
+    b.erase(5999);
+    EXPECT_NE(a.order_count(), b.order_count());
+}
+
+TYPED_TEST(BookTest, RejectsReferencesBeyondPackedRange) {
+    EXPECT_FALSE(this->b.add(kMaxRef, kB, 1, 10'0000, 1));
+    EXPECT_TRUE(this->b.add(kMaxRef - 1, kB, 1, 10'0000, 1));
+    EXPECT_FALSE(this->b.replace(kMaxRef - 1, kMaxRef, 1, 10'0000, 2));
+    EXPECT_EQ(this->b.shares(kMaxRef - 1), 1u);
+}

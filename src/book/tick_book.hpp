@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <stdexcept>
 #include <vector>
 
 #include "book/id_map.hpp"
@@ -54,7 +55,8 @@ class TickBook {
 
     bool add(std::uint64_t ref, Side side, std::uint32_t shares, std::uint32_t price,
              std::uint64_t seq) {
-        if (shares == 0 || !valid_price(price) || ids_.find(ref) != kNoOrder) return false;
+        if (shares == 0 || !valid_price(price) || ref >= kMaxRef || ids_.find(ref) != kNoOrder)
+            return false;
         place(ref, static_cast<int>(side), shares, price, seq);
         return true;
     }
@@ -73,7 +75,8 @@ class TickBook {
                  std::uint32_t price, std::uint64_t seq) {
         const std::uint32_t i = ids_.find(old_ref);
         if (i == kNoOrder || shares == 0 || !valid_price(price)) return false;
-        if (new_ref != old_ref && ids_.find(new_ref) != kNoOrder) return false;
+        if (new_ref >= kMaxRef || (new_ref != old_ref && ids_.find(new_ref) != kNoOrder))
+            return false;
         const int s = side_of(o_.px(i));
         remove(i, old_ref);
         place(new_ref, s, shares, price, seq);
@@ -165,6 +168,35 @@ class TickBook {
             if (!deep_ok) return false;
         }
         return n == live_ && ids_.size() == live_;
+    }
+
+    // Fork: copies the used part of every pool and the fixed-size state. Indices replace
+    // pointers throughout, so the copy needs no fix-up.
+    void copy_from(const TickBook& o) {
+        o_.copy_from(o.o_, o.used_);
+        ids_.copy_from(o.ids_);
+        for (int s = 0; s < 2; ++s) {
+            over_[s].copy_from(o.over_[s], o.n_over_[s]);
+            n_over_[s] = o.n_over_[s];
+            deep_[s].copy_from(o.deep_[s]);
+            summary_[s] = o.summary_[s];
+        }
+        used_ = o.used_;
+        free_ = o.free_;
+        live_ = o.live_;
+        tick_ = o.tick_;
+        base_ = o.base_;
+        base_g_ = o.base_g_;
+        recentres_ = o.recentres_;
+        std::memcpy(bits_, o.bits_, sizeof bits_);
+        std::memcpy(win_, o.win_, sizeof win_);
+    }
+
+    // Bytes a fork copies.
+    std::size_t state_bytes() const {
+        std::vector<std::uint8_t> img;
+        save(img);
+        return img.size();
     }
 
     // Raw image of the whole state (pools up to their used size, window, ID table). It is a
@@ -436,6 +468,7 @@ class TickBook {
             i = free_;
             free_ = o_.next(i);
         } else {
+            if (used_ == kMaxOrders) throw std::length_error("book holds 2^24 orders");
             i = used_++;
             o_.reserve(used_);
         }
