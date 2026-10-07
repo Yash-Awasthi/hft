@@ -66,4 +66,5 @@ jobs:
       - run: python research/tests/test_regime.py
       - run: python research/tests/test_impact.py
       - run: python research/tests/test_validity.py
+      - run: python research/tests/test_audit.py
       - run: pip install torch --index-url https://download.pytorch.org/whl/cpu && python research/tests/test_transformer.py
