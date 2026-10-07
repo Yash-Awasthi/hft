@@ -24,3 +24,6 @@ target_link_libraries(day_stats PRIVATE hft_core hft_data)
 
 add_executable(feature_stream feature_stream.cpp)
 target_link_libraries(feature_stream PRIVATE hft_core hft_data)
+
+add_executable(reinsert reinsert.cpp)
+target_link_libraries(reinsert PRIVATE hft_core hft_data)

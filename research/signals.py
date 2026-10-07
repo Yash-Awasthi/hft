@@ -96,7 +96,9 @@ def standardize(train, other, cols):
     mu = train.select([pl.col(c).mean() for c in cols]).row(0)
     sd = train.select([pl.col(c).std() for c in cols]).row(0)
     def z(d):
-        return np.column_stack([np.nan_to_num((d[c].to_numpy() - m) / (s or 1)) for c, m, s in zip(cols, mu, sd)])
+        # Winsorized at 5 sd: a few heavy-tailed flow features otherwise dominate linear fits.
+        return np.column_stack([np.clip(np.nan_to_num((d[c].to_numpy() - m) / (s or 1)), -5, 5)
+                                for c, m, s in zip(cols, mu, sd)])
     return z(train), z(other)
 
 
@@ -105,7 +107,7 @@ def ridge(X, y, lam):
     return np.linalg.solve(A, X.T @ y)
 
 
-def rls_predict(X, y, symbols, ts, horizon_ns, w0, lam=0.999, delta=100.0):
+def rls_predict(X, y, symbols, ts, horizon_ns, w0, lam=0.9999, delta=1.0):
     """Online recursive least squares per symbol with forgetting factor lam, started from the
     ridge weights. A row's target is used for an update only once it has resolved, at
     ts + horizon, so every prediction uses targets known at its own time."""
@@ -186,7 +188,7 @@ def main():
     ap.add_argument("train", nargs="+")
     ap.add_argument("--val", required=True)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--train-every", type=int, default=3)
+    ap.add_argument("--train-every", type=int, default=6)
     ap.add_argument("--registry", default=str(pathlib.Path.home() / "data/registry.sqlite"))
     a = ap.parse_args()
 

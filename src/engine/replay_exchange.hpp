@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <optional>
+#include <unordered_map>
 #include <vector>
 
 #include "book/id_map.hpp"
@@ -78,9 +79,26 @@ class ReplayExchange {
                        left});
             return ref;
         }
-        book_.add(ref, o.side, left, o.price, ++arrival_, o.owner);
-        virt_.push_back(ref);
+        rest(ref, o.side, left, o.price, o.owner, (max_ref_ << 20) | ++virtual_count_);
         return ref;
+    }
+
+    // Shares queued ahead of a resting virtual order at its level, kept in O(1) per event:
+    // it falls whenever an order that arrived earlier at that level loses shares.
+    std::uint64_t queue_ahead(std::uint64_t ref) const {
+        for (const Virt& v : virt_)
+            if (v.ref == ref) return v.ahead;
+        return 0;
+    }
+
+    // Takes the real order `real_ref` out of the replayed book from its arrival on and keeps
+    // it as a virtual order of `owner` at the same queue position. Its executions in the data
+    // become executions of the virtual order at that position; its cancels and deletes apply
+    // to it. This is the queue-tracking check of DESIGN.md section 2.
+    void mirror(std::uint64_t real_ref, std::uint32_t owner) { mirrors_[real_ref] = {owner, 0}; }
+    std::uint64_t mirrored(std::uint64_t real_ref) const {
+        const auto it = mirrors_.find(real_ref);
+        return it == mirrors_.end() ? 0 : it->second.vref;
     }
 
     template <class Sink>
@@ -91,8 +109,7 @@ class ReplayExchange {
                        0});
             return false;
         }
-        book_.erase(ref);
-        std::erase(virt_, ref);
+        drop_virtual(*v, v->qty);
         sink(Event{EventType::Cancelled, Reason::User, v->side, false, owner, ref, v->price,
                    v->qty});
         return true;
@@ -104,25 +121,26 @@ class ReplayExchange {
         ReplayExchange& x;
         Sink& sink;
         void operator()(const itch::AddOrder& m) {
-            x.book_.add(m.ref, m.side == 'B' ? Side::Buy : Side::Sell, m.shares, m.price,
-                        ++x.arrival_);
+            const Side side = m.side == 'B' ? Side::Buy : Side::Sell;
+            if (auto it = x.mirrors_.find(m.ref); it != x.mirrors_.end()) {
+                it->second.vref = x.next_ref_++;
+                x.rest(it->second.vref, side, m.shares, m.price, it->second.owner,
+                       x.real_key(m.ref));
+                return;
+            }
+            x.book_.add(m.ref, side, m.shares, m.price, x.real_key(m.ref));
         }
         void operator()(const itch::OrderExecuted& m) { x.real_exec(m.ref, m.shares, sink); }
         void operator()(const itch::OrderExecutedPrice& m) { x.real_exec(m.ref, m.shares, sink); }
-        void operator()(const itch::OrderCancel& m) {
-            x.book_.cancel(m.ref, m.cancelled);
-            x.forget_if_gone(m.ref);
-        }
-        void operator()(const itch::OrderDelete& m) {
-            x.book_.erase(m.ref);
-            x.forget_if_gone(m.ref);
-        }
+        void operator()(const itch::OrderCancel& m) { x.real_reduce(m.ref, m.cancelled); }
+        void operator()(const itch::OrderDelete& m) { x.real_reduce(m.ref, ~0u); }
         void operator()(const itch::OrderReplace& m) {
-            const auto v = x.book_.order(m.orig_ref);
+            const std::uint64_t ref = x.resolve(m.orig_ref);
+            const auto v = x.book_.order(ref);
             if (!v) return;
-            x.book_.erase(m.orig_ref);
-            x.forget_if_gone(m.orig_ref);
-            x.book_.add(m.new_ref, v->side, m.shares, m.price, ++x.arrival_);
+            x.real_reduce(m.orig_ref, ~0u);
+            x.mirrors_.erase(m.orig_ref);
+            x.book_.add(m.new_ref, v->side, m.shares, m.price, x.real_key(m.new_ref));
         }
         // ITCH sets the side of every P message to 'B', so a hidden print is matched against
         // both sides: it reaches bids at or above its price and asks at or below it. A
@@ -143,39 +161,114 @@ class ReplayExchange {
         return side == Side::Buy ? a > b : a < b;
     }
 
-    template <class Sink>
-    void real_exec(std::uint64_t ref, std::uint32_t shares, Sink& sink) {
+    struct Virt {
+        std::uint64_t ref, seq, ahead;
+        std::uint32_t price;
+        Side side;
+    };
+    struct Mirror {
+        std::uint32_t owner;
+        std::uint64_t vref;
+    };
+
+    // Book reference standing for a real reference: the virtual copy of a mirrored order.
+    std::uint64_t resolve(std::uint64_t real_ref) const {
+        const auto it = mirrors_.find(real_ref);
+        return it == mirrors_.end() ? real_ref : it->second.vref;
+    }
+
+    // Queue priority follows the order reference, which Nasdaq assigns on receipt: orders
+    // received before the open are displayed at 09:30 yet keep their earlier rank. A virtual
+    // order ranks after every reference seen so far.
+    std::uint64_t real_key(std::uint64_t ref) {
+        max_ref_ = std::max(max_ref_, ref);
+        return ref << 20;
+    }
+
+    void rest(std::uint64_t ref, Side side, std::uint32_t qty, std::uint32_t price,
+              std::uint32_t owner, std::uint64_t key) {
+        std::uint64_t ahead = 0;
+        auto f = book_.front(side);
+        while (f && f->price != price) f = book_.next_level(side, f->price);
+        for (; f; f = book_.behind(f->ref))
+            if (f->seq < key) ahead += f->qty;
+        book_.add(ref, side, qty, price, key, owner);
+        virt_.push_back({ref, key, ahead, price, side});
+    }
+
+    // `q` shares left the queue at (side, price) from an order that arrived at `seq`.
+    void removed(Side side, std::uint32_t price, std::uint64_t seq, std::uint64_t q) {
+        for (Virt& v : virt_)
+            if (v.side == side && v.price == price && v.seq > seq) v.ahead -= std::min(v.ahead, q);
+    }
+
+    void drop_virtual(const book::OrderView& v, std::uint32_t q) {
+        if (q >= v.qty) {
+            book_.erase(v.ref);
+            std::erase_if(virt_, [&](const Virt& w) { return w.ref == v.ref; });
+        } else {
+            book_.cancel(v.ref, q);
+        }
+        removed(v.side, v.price, v.seq, std::min(q, v.qty));
+    }
+
+    // Partial cancel (or delete with ~0) of a real order, or of the virtual copy if mirrored.
+    void real_reduce(std::uint64_t real_ref, std::uint32_t q) {
+        const std::uint64_t ref = resolve(real_ref);
         const auto r = book_.order(ref);
         if (!r) return;
+        if (ref != real_ref) {
+            drop_virtual(*r, q);
+            return;
+        }
+        const std::uint32_t n = std::min(q, r->qty);
+        book_.cancel(ref, n);
+        removed(r->side, r->price, r->seq, n);
+        forget_if_gone(ref);
+    }
+
+    template <class Sink>
+    void real_exec(std::uint64_t real_ref, std::uint32_t shares, Sink& sink) {
+        const std::uint64_t ref = resolve(real_ref);
+        const auto r = book_.order(ref);
+        if (!r) return;
+        if (ref != real_ref) {
+            // The aggressor reached the mirrored order's position: fill it and any virtual
+            // order ranking ahead of it.
+            virtual_fills(r->side, r->price, r->seq + 1, shares, false, sink, true);
+            return;
+        }
         const std::uint32_t got = virtual_fills(r->side, r->price, r->seq, shares, false, sink);
         div_.diverted += got;
         book_.execute(ref, shares);
+        removed(r->side, r->price, r->seq, shares);
         forget_if_gone(ref);
     }
 
     // Fills virtual orders on `side` that rank ahead of a trade of `shares` at `px` against an
     // order that arrived at `arrival` (all arrivals for hidden prints, which rank last).
     template <class Sink>
+    // own: the data executed a mirrored order, so queue priority applies under either rule.
     std::uint32_t virtual_fills(Side side, std::uint32_t px, std::uint64_t arrival,
-                                std::uint32_t shares, bool hidden, Sink& sink) {
+                                std::uint32_t shares, bool hidden, Sink& sink, bool own = false) {
         std::uint32_t total = 0;
         while (shares) {
             // Best-ranked eligible virtual order; few are live at once, so a scan suffices.
             std::optional<book::OrderView> best;
-            for (std::uint64_t ref : virt_) {
-                const auto v = book_.order(ref);
+            for (const Virt& w : virt_) {
+                const auto v = book_.order(w.ref);
                 if (v->side != side) continue;
                 const bool through = better(side, v->price, px);
                 const bool ahead = v->price == px && v->seq < arrival;
-                if (!(rule_ == FillRule::TradeThrough ? through : through || ahead)) continue;
+                if (!(rule_ == FillRule::TradeThrough && !own ? through : through || ahead))
+                    continue;
                 if (!best || better(side, v->price, best->price) ||
                     (v->price == best->price && v->seq < best->seq))
                     best = v;
             }
             if (!best) break;
             const std::uint32_t q = std::min(shares, best->qty);
-            book_.execute(best->ref, q);
-            if (q == best->qty) std::erase(virt_, best->ref);
+            drop_virtual(*best, q);
             div_.through_fills += better(side, best->price, px);
             div_.hidden_fills += hidden;
             sink(Event{EventType::Fill, Reason::None, side, true, best->owner, best->ref,
@@ -222,9 +315,10 @@ class ReplayExchange {
     FillRule rule_;
     Book book_;
     book::LinearMap consumed_;  // real reference -> shares taken by our orders
-    std::vector<std::uint64_t> virt_;
+    std::vector<Virt> virt_;
+    std::unordered_map<std::uint64_t, Mirror> mirrors_;  // experiment only, off the hot path
     Divergence div_;
-    std::uint64_t arrival_ = 0;
+    std::uint64_t max_ref_ = 0, virtual_count_ = 0;
     std::uint64_t next_ref_ = MatchingEngine<>::kFirstRef;
     std::uint64_t next_match_ = 0;
 };

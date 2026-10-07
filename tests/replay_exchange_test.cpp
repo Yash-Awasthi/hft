@@ -129,3 +129,57 @@ TEST(ReplayExchange, HiddenPrintsIgnoreTheSideField) {
     feed(x, m.hidden('B', 5, 9'9900), l);  // below our bid
     EXPECT_EQ(l.filled(bid), 5u);
 }
+
+// A mirrored real order leaves the replayed book and lives on as a virtual order at the same
+// queue position: its own executions in the data become fills of the virtual order, its
+// cancels reduce it, and orders behind it are untouched.
+TEST(ReplayExchange, MirroredOrderReproducesItsExecutions) {
+    ReplayExchange<> x({}, FillRule::Queue);
+    Log l;
+    Itch m;
+    x.mirror(2, 7);
+    feed(x, m.add(1, 'B', 100, 10'0000), l);
+    feed(x, m.add(2, 'B', 300, 10'0000), l);  // mirrored
+    feed(x, m.add(3, 'B', 100, 10'0000), l);
+    const auto v = x.mirrored(2);
+    ASSERT_NE(v, 0u);
+    EXPECT_EQ(x.book().order(v)->owner, 7u);
+    EXPECT_FALSE(x.book().order(2).has_value());
+    EXPECT_EQ(x.queue_ahead(v), 100u);
+    feed(x, m.exec(1, 60), l);
+    EXPECT_EQ(x.queue_ahead(v), 40u);
+    feed(x, m.exec(1, 40), l);
+    EXPECT_EQ(x.queue_ahead(v), 0u);
+    feed(x, m.exec(2, 120), l);  // the data executes the mirrored order
+    EXPECT_EQ(l.filled(v), 120u);
+    feed(x, m.cancel(2, 80), l);
+    EXPECT_EQ(x.book().order(v)->qty, 100u);
+    feed(x, m.exec(2, 100), l);
+    EXPECT_EQ(l.filled(v), 220u);
+    EXPECT_FALSE(x.book().order(v).has_value());
+    EXPECT_EQ(x.divergence().diverted, 0u);
+    EXPECT_EQ(x.book().order(3)->qty, 100u);
+    EXPECT_TRUE(x.book().check());
+}
+
+TEST(ReplayExchange, QueueAheadMatchesTheBookWalk) {
+    ReplayExchange<> x({}, FillRule::Queue);
+    Log l;
+    Itch m;
+    for (std::uint64_t r = 1; r <= 20; ++r) feed(x, m.add(r, 'S', 10 * r, 10'0100), l);
+    const auto v = x.submit({1, hft::book::Side::Sell, 10'0100, 50}, l);
+    for (std::uint64_t r = 21; r <= 30; ++r) feed(x, m.add(r, 'S', 5, 10'0100), l);
+    for (std::uint64_t r = 1; r <= 30; r += 3) feed(x, r % 2 ? m.cancel(r, 3) : m.del(r), l);
+    feed(x, m.exec(2, 20), l);
+    EXPECT_EQ(static_cast<std::int64_t>(x.queue_ahead(v)), x.book().queue_ahead(v));
+}
+
+TEST(ReplayExchange, MirroredExecutionsFillUnderTheConservativeRuleToo) {
+    ReplayExchange<> x({}, FillRule::TradeThrough);
+    Log l;
+    Itch m;
+    x.mirror(5, 3);
+    feed(x, m.add(5, 'S', 100, 20'0000), l);
+    feed(x, m.exec(5, 30), l);
+    EXPECT_EQ(l.filled(x.mirrored(5)), 30u);
+}
