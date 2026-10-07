@@ -444,9 +444,9 @@ nb::dict qr_events(const std::string& store, std::uint16_t locate, int K, std::u
 nb::dict qr_simulate(int K, int N, std::uint32_t aes, std::uint32_t p_ref, double theta,
                      std::vector<double> L, std::vector<double> C, std::vector<double> M,
                      std::vector<double> init, std::uint64_t start_ns, std::uint64_t end_ns,
-                     std::uint64_t seed, const std::string& path) {
+                     std::uint64_t seed, const std::string& path, std::uint32_t tick) {
     sources::QrParams p;
-    p.K = K, p.N = N, p.aes = aes, p.p_ref = p_ref, p.theta = theta;
+    p.K = K, p.N = N, p.aes = aes, p.tick = tick, p.p_ref = p_ref, p.theta = theta;
     p.L = std::move(L), p.C = std::move(C), p.M = std::move(M), p.init = std::move(init);
     p.start_ns = start_ns, p.end_ns = end_ns;
     sources::QueueReactive sim(std::move(p), seed);
@@ -482,7 +482,7 @@ NB_MODULE(hftpy, m) {
           nb::arg("tick"), nb::arg("start_ns"), nb::arg("end_ns"));
     m.def("qr_simulate", &qr_simulate, nb::arg("K"), nb::arg("N"), nb::arg("aes"), nb::arg("p_ref"),
           nb::arg("theta"), nb::arg("L"), nb::arg("C"), nb::arg("M"), nb::arg("init"),
-          nb::arg("start_ns"), nb::arg("end_ns"), nb::arg("seed"), nb::arg("path"));
+          nb::arg("start_ns"), nb::arg("end_ns"), nb::arg("seed"), nb::arg("path"), nb::arg("tick") = 100);
     m.attr("lifecycle_covariates") =
         nb::make_tuple("queue_ahead", "opposite_qty", "imbalance", "spread_ticks", "volatility",
                        "ofi_signal", "shares");

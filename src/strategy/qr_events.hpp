@@ -8,9 +8,9 @@
 // insertion (L), cancellation (C) or execution (M) at a window level i = 1..K of either side
 // is recorded with the shares at all 2K levels just before it. A replace is a cancellation
 // and an insertion. Depletion episodes of level 1 end either with p_ref moving towards the
-// emptied side (a move) or with level 1 refilled first; their counts estimate theta. Every
-// p_ref change also gets a record of kind 3 holding the shares before it, so the records cut
-// time into intervals of constant state.
+// emptied side (a move) or otherwise (refilled first, or p_ref moved the other way); their
+// counts estimate theta. Every p_ref change also gets a record of kind 3 holding the shares
+// before it, so the records cut time into intervals of constant state.
 
 #include <cstdint>
 #include <string>
@@ -148,8 +148,7 @@ class QrRecorder {
         for (int s = 0; s < 2; ++s) {
             if (pending_episode_[s] && window) {
                 if (dir == (s == 0 ? -1 : 1)) ++r_.episodes_moved, pending_episode_[s] = false;
-                else if (dir) pending_episode_[s] = false;  // moved away: neither outcome
-                else if (qty(s, 1)) ++r_.episodes_refilled, pending_episode_[s] = false;
+                else if (dir || qty(s, 1)) ++r_.episodes_refilled, pending_episode_[s] = false;
             }
             const bool empty = qty(s, 1) == 0;
             if (empty && !was_empty_[s] && !dir && window) pending_episode_[s] = true;

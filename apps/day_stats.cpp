@@ -1,6 +1,9 @@
 // Per-symbol statistics of one day for universe selection, over regular hours (09:30 to
 // 16:00): time-weighted spread in ticks, share of time at one tick, mean mid, traded shares
-// and notional, message count, ETP flag and market category from the directory message.
+// and notional, message count, ETP flag and market category from the directory message;
+// for the regime forecast: time-weighted depth at the best (mean of the two sides), shares
+// executed against displayed and hidden orders, hidden shares at sub-penny prices (midpoint
+// fills), execution count, eta of the mid and the realized variance of the 1-minute mid ($^2).
 // Usage: day_stats <store-dir> > stats.tsv
 
 #include <algorithm>
@@ -13,6 +16,7 @@
 #include "book/tick_book.hpp"
 #include "data/store.hpp"
 #include "feed/itch.hpp"
+#include "strategy/tick_stats.hpp"
 
 namespace {
 
@@ -26,6 +30,8 @@ struct Stats {
     char etp = '?', category = '?';
     std::uint64_t msgs = 0, shares = 0;
     double notional = 0, spread_ticks_t = 0, one_tick_t = 0, mid_t = 0, two_sided_t = 0;
+    double depth_t = 0;
+    std::uint64_t displayed = 0, hidden = 0, subpenny_hidden = 0, executions = 0;
 };
 
 struct Meta {
@@ -55,7 +61,8 @@ int main(int argc, char** argv) {
     std::sort(locs.begin(), locs.end());
     std::printf(
         "locate\tsymbol\tmsgs\tshares\tnotional\tspread_ticks\tone_tick_share\tmid\ttwo_sided_"
-        "share\tetp\tcategory\n");
+        "share\tetp\tcategory\tdepth\tdisplayed\thidden\tsubpenny_hidden\texecutions\teta\t"
+        "rv_1min\n");
     for (std::uint16_t loc : locs) {
         if (loc == 0) continue;
         book::TickBook<> b(4096);
@@ -77,6 +84,12 @@ int main(int argc, char** argv) {
             s.spread_ticks_t += ticks * dt;
             s.one_tick_t += (bbo.ask_px - bbo.bid_px == 100) * dt;
             s.mid_t += (bbo.ask_px + bbo.bid_px) / 2e4 * dt;
+            s.depth_t += static_cast<double>(bbo.bid_qty + bbo.ask_qty) / 2 * dt;
+        };
+        strategy::EtaCounter eta;
+        strategy::ClockVariance rv(kOpen, 60'000'000'000ull);
+        auto mid = [](const book::Bbo& q) {
+            return q.bid_px && q.ask_px && q.ask_px > q.bid_px ? (q.bid_px + q.ask_px) / 2e4 : NAN;
         };
         while (rd.next(rec)) {
             ++s.msgs;
@@ -90,18 +103,32 @@ int main(int argc, char** argv) {
                 if (const auto o = b.order(ref); o && ts >= kOpen && ts < kClose)
                     s.notional += o->price / 1e4 * load_be32(rec.data + 19);
             }
+            const std::uint64_t disp0 = ap.stats.executed, hid0 = ap.stats.hidden;
             itch::dispatch(rec.data, rec.len, ap);
-            if (ts >= kOpen && ts < kClose)
+            const bool hours = ts >= kOpen && ts < kClose;
+            if (hours) {
                 s.shares += ap.stats.executed + ap.stats.hidden - before;
+                s.displayed += ap.stats.executed - disp0;
+                s.hidden += ap.stats.hidden - hid0;
+                if (const char t = static_cast<char>(rec.data[0]); t == 'E' || t == 'C' || t == 'P')
+                    ++s.executions;
+                if (rec.data[0] == 'P' && load_be32(rec.data + 32) % 100)
+                    s.subpenny_hidden += ap.stats.hidden - hid0;
+            }
+            if (hours) rv.advance(ts, mid(bbo));
             bbo = b.bbo();
+            if (hours) eta.on_mid(mid(bbo));
         }
         accrue(kClose);
+        rv.advance(kClose, mid(bbo));
         const double t = s.two_sided_t > 0 ? s.two_sided_t : 1;
-        std::printf("%u\t%s\t%llu\t%llu\t%.0f\t%.4f\t%.4f\t%.4f\t%.4f\t%c\t%c\n", loc,
+        std::printf("%u\t%s\t%llu\t%llu\t%.0f\t%.4f\t%.4f\t%.4f\t%.4f\t%c\t%c\t%.1f\t%llu\t%llu\t%llu\t%llu\t%.4f\t%.6g\n", loc,
                     s.symbol.empty() ? "-" : s.symbol.c_str(), (unsigned long long)s.msgs,
                     (unsigned long long)s.shares, s.notional, s.spread_ticks_t / t,
                     s.one_tick_t / t, s.mid_t / t, s.two_sided_t / ((kClose - kOpen) * 1e-9), s.etp,
-                    s.category);
+                    s.category, s.depth_t / t, (unsigned long long)s.displayed,
+                    (unsigned long long)s.hidden, (unsigned long long)s.subpenny_hidden,
+                    (unsigned long long)s.executions, eta.eta(), rv.variance());
     }
     return 0;
 }

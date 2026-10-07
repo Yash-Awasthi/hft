@@ -61,6 +61,34 @@ def test_recovers_rates_and_theta(py_build, ingest):
     assert abs(fit["theta"] - theta) < 4 * fit["theta_se"], (fit["theta"], fit["theta_se"])
 
 
+def test_half_tick_model_runs_on_the_half_penny_grid_and_is_recovered(py_build, ingest):
+    sys.path.insert(0, py_build)
+    import hftpy
+
+    L, C, M, init, theta = truth()
+    fit = {"K": K, "N": N, "aes": AES, "tick": 100, "theta": theta, "L": L, "C": C, "M": M, "init": init,
+           "time_L": np.ones_like(L), "time_C": np.ones_like(L), "time_M": np.ones_like(L)}
+    half = qr.half_tick(fit, inner_share=2 / 3)
+    assert half["K"] == 2 * K and half["tick"] == 50
+    assert np.allclose(half["L"][0::2] + half["L"][1::2], L)
+    assert np.allclose(half["init"].sum(axis=1), 1)
+    with tempfile.TemporaryDirectory() as d:
+        raw, store = pathlib.Path(d) / "sim.itch", pathlib.Path(d) / "store"
+        hftpy.qr_simulate(**qr.simulate_args(half, 200_025, START, END, 4, raw))
+        store.mkdir()
+        with open(raw, "rb") as f:
+            subprocess.run([ingest, str(store)], stdin=f, check=True, capture_output=True)
+        loc = hftpy.symbols(str(store))["QRSIM"]
+        ev = hftpy.qr_events(str(store), loc, 2 * K, 50, START, END)
+    back = qr.calibrate(ev, 2 * K, N, tick=50)
+    ok = back["time_L"] > 50
+    z = (back["L"][ok] - half["L"][ok]) / back["L_se"][ok]
+    assert np.max(np.abs(z)) < 5, np.max(np.abs(z))
+    assert abs(back["theta"] - theta) < 4 * back["theta_se"], (back["theta"], back["theta_se"])
+
+
 if __name__ == "__main__":
     test_recovers_rates_and_theta(sys.argv[1], sys.argv[2])
     print("test_recovers_rates_and_theta ok")
+    test_half_tick_model_runs_on_the_half_penny_grid_and_is_recovered(sys.argv[1], sys.argv[2])
+    print("test_half_tick_model_runs_on_the_half_penny_grid_and_is_recovered ok")

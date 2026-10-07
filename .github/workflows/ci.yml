@@ -63,3 +63,4 @@ jobs:
       - run: python research/tests/test_hjb.py
       - run: python research/tests/test_backtest_report.py
       - run: python research/tests/test_qr.py build/release build/release/apps/ingest
+      - run: python research/tests/test_regime.py
