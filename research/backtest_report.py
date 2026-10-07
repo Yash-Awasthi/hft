@@ -7,7 +7,7 @@ and the deflated Sharpe with the Q1 trial count from the registry. Then the late
 fee and fill-rule sensitivity, ablations and sanity strategies.
 
 Usage: python research/backtest_report.py --main val-main --latency val-latency
-           --sensitivity val-sens --ablation val-ablation --sanity val-sanity
+           --ablation val-ablation --sanity val-sanity [--sensitivity val-sens]
            [--hjb hjb.json] --out docs/results/ms6-backtest.md
 """
 
@@ -152,25 +152,60 @@ def ablation_section(s):
     return md_table(["Group", "Strategy", "Removed", "PnL $ [95% CI]", "Change vs ext $", "Fills", "PnL c/share"], rows)
 
 
+def idle(s):
+    """(group, strategy, mean rejects per stock-day) for strategies that sent no order at all."""
+    g = (s.group_by(["group", "strategy"]).agg(pl.col("orders").sum(), pl.col("rejects").mean())
+         .filter(pl.col("orders") == 0).sort(["group", "strategy"]))
+    return [(r["group"], r["strategy"], float(r["rejects"])) for r in g.iter_rows(named=True)]
+
+
+def as_distance_lines(gamma=0.05, collar_ticks=20):
+    """Avellaneda-Stoikov base distance ln(1 + gamma/k)/gamma per group from the fitted k,
+    against the order collar (gamma as in research/backtests.py, collar in src/backtest/risk.hpp)."""
+    parts = []
+    for g in ("large_tick", "small_tick"):
+        p = DATA / "policies" / f"dp_{g}_nosignal.bin.json"
+        if p.exists():
+            k = json.loads(p.read_text())["as_k"]
+            parts.append(f"{g} k = {k:.3f}/tick, {np.log1p(gamma / k) / gamma:.1f} ticks")
+    if not parts:
+        return []
+    return [f"AS base quote distance from the mid (gamma {gamma}): {'; '.join(parts)}. Orders more "
+            f"than {collar_ticks} ticks from the mid are rejected by the risk collar.", ""]
+
+
 def determinism(a, b):
     """Rows present in both sweeps with identical totals (same config twice must match)."""
     j = a.join(b, on=KEYS, suffix="_b")
     return len(j), int((j["total"] == j["total_b"]).sum())
 
 
-def main():
+def sensitivity_section(s_sens):
+    head = ["## Fee schedule and fill rule", ""]
+    if s_sens is None:
+        return head + ["Sensitivity sweep not included in this version of the report.", ""]
+    return head + [config_table(s_sens, ("group", "strategy", "fees", "fill_rule"),
+                                ["Group", "Strategy", "Fees", "Fill rule"]), ""]
+
+
+def parser():
     ap = argparse.ArgumentParser()
-    for k in ("main", "latency", "sensitivity", "ablation", "sanity"):
+    for k in ("main", "latency", "ablation", "sanity"):
         ap.add_argument(f"--{k}", required=True)
+    ap.add_argument("--sensitivity")
     ap.add_argument("--hjb")
     ap.add_argument("--latency-strategy", default="ext")
     ap.add_argument("--out", required=True)
-    a = ap.parse_args()
+    return ap
+
+
+def main():
+    a = parser().parse_args()
 
     n_trials = trial_count(DATA / "registry.sqlite", "Q1")
     s_main, m_main = load(a.main)
     s_lat, _ = load(a.latency)
-    s_sens, _ = load(a.sensitivity)
+    s_sens = load(a.sensitivity)[0] if a.sensitivity else None
     s_abl, _ = load(a.ablation)
     s_san, m_san = load(a.sanity)
     days = sorted(s_main["day"].unique().to_list())
@@ -182,7 +217,7 @@ def main():
         "# MS6: quoting and backtest",
         "",
         f"Validation day{'s' if len(days) > 1 else ''} {', '.join(days)} only; the test days stay locked. "
-        f"{s_main['symbol'].n_unique()} universe stocks (25 large-tick, 25 small-tick). Dollars per stock-day. "
+        f"{s_main['symbol'].n_unique()} universe stocks (25 large-tick, 25 small-tick). Accounting in integer micro-dollars; tables in dollars per stock-day. "
         "With a single validation day the 95% intervals resample stocks, not days: they measure "
         "dispersion across stocks on one day and say nothing about day-to-day variation.",
         "",
@@ -201,6 +236,10 @@ def main():
         "",
         main_tab,
         "",
+        "Strategies that sent no order on any stock-day (mean risk rejects per stock-day): "
+        + ("; ".join(f"{g} {st} ({fmt(r, 0)})" for g, st, r in idle(s_main)) or "none") + ".",
+        "",
+        *as_distance_lines(),
         "## Sanity strategies",
         "",
         config_table(s_san, ("group", "strategy"), ["Group", "Strategy"]),
@@ -213,10 +252,7 @@ def main():
                  [[r["group"], fmt(r["latency_us"], 0), fmt(r["pnl"]), fmt(r["fills"], 0),
                    fmt(r["per_share"] * 100, 3)] for r in lat.iter_rows(named=True)]),
         "",
-        "## Fee schedule and fill rule",
-        "",
-        config_table(s_sens, ("group", "strategy", "fees", "fill_rule"), ["Group", "Strategy", "Fees", "Fill rule"]),
-        "",
+        *sensitivity_section(s_sens),
         "## Ablation",
         "",
         ablation_section(s_abl),
@@ -224,6 +260,10 @@ def main():
         f"Determinism: {det_eq} of {det_n} jobs repeated across the main and ablation sweeps give identical totals.",
         "",
     ]
+    out += ["## Not built", "",
+            "Deep queue reservation (resting orders behind the best to hold queue position), "
+            "portfolio-level inventory across stocks, and online recalibration of the fill "
+            "intensity A and decay k (sigma is an online EWMA; A and k are fixed from the train days).", ""]
     if a.hjb:
         h = json.loads(pathlib.Path(a.hjb).read_text())
         out += ["## Avellaneda-Stoikov closed forms against the numerical HJB", "", h["text"], ""]

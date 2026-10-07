@@ -73,6 +73,22 @@ def test_latency_curve_is_mean_per_group_and_latency():
     assert np.allclose(c["pnl"].to_list(), [200 * br.UNIT, -100 * br.UNIT])
 
 
+def test_sensitivity_is_optional_and_the_report_says_so():
+    a = br.parser().parse_args(["--main", "m", "--latency", "l", "--ablation", "b", "--sanity", "s", "--out", "o"])
+    assert a.sensitivity is None
+    text = "\n".join(br.sensitivity_section(None))
+    assert "## Fee schedule and fill rule" in text and "not included" in text
+
+
+def test_idle_lists_configurations_that_sent_no_order_with_their_rejects():
+    s = summary([
+        {"strategy": "a", "group": "g", "symbol": "X", "orders": 0, "rejects": 10},
+        {"strategy": "a", "group": "g", "symbol": "Y", "orders": 0, "rejects": 30},
+        {"strategy": "b", "group": "g", "symbol": "X", "orders": 5, "rejects": 0},
+    ])
+    assert br.idle(s) == [("g", "a", 20.0)]
+
+
 if __name__ == "__main__":
     for name, f in list(globals().items()):
         if name.startswith("test_"):

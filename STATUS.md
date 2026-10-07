@@ -22,6 +22,12 @@ task finishes or blocks.
   (`docs/results/ms5-fills.md`).
 - Data: 2025-11-28 and 2025-12-08 to 2025-12-11 ingested (0 bad frames) with checkpoints
   verified (220, 180, 325 and 302 for the December days).
+- MS6: integer micro-dollar accounting with the PnL identity checked every event;
+  event-driven backtest; zero, random, foresight, naive, Avellaneda-Stoikov (GLFT), DP and
+  DP-with-signal strategies, strategy 5 extensions with ablation switches; numerical HJB
+  check; report on the validation day (`docs/results/ms6-backtest.md`). Not built: deep queue
+  reservation, portfolio inventory, online recalibration of A and k. Fee and fill-rule
+  sensitivity sweep finishing; the report gains that section when it ends.
 
 ### MS2 tasks
 
@@ -59,15 +65,6 @@ task finishes or blocks.
 
 ## In progress
 
-- MS6: quoting and backtest. Built: exact integer accounting (micro-dollars) with the PnL
-  identity checked every event; event-driven backtest; zero, random, foresight, naive,
-  Avellaneda-Stoikov (GLFT), DP and DP-with-signal strategies, strategy 5 extensions with
-  ablation switches; DP policy tables for both groups (`research/run_dp.py`); sweep
-  orchestrator; report (`research/backtest_report.py`); numerical HJB check of the AS closed
-  forms (`research/hjb.py`). Sanity on the validation day: see Results. Validation sweeps
-  (main, latency, ablation, fee and fill-rule sensitivity) running; report next.
-  Not built: deep queue reservation, portfolio inventory, online recalibration of A and k
-  (sigma is already an online EWMA in the AS strategy).
 - MS7 to MS10: first versions done with reports (`docs/results/ms7-regime.md`,
   `ms8-impact.md`, `ms9-transformer.md`, `ms10-validity.md`); misses listed under Results
   and in each report's "Not built".
@@ -144,6 +141,15 @@ task finishes or blocks.
 | MS5 | Re-inserted real orders reproduced exactly | exact | 96.7% queue rule, 99.6% conservative (40,158 executed orders) | `reinsert` |
 | MS5 | Fill model calibration on held-out orders | - | mean abs error 0.013 to 0.020 by decile, tau 10 ms to 10 s | `research/fills.py` |
 | MS5 | L2-only queue estimate error | - | 14,169 shares vs 73,750 exact mean (19%) | `reinsert` |
+| MS6 | Zero strategy PnL | 0 | 0.00 both groups | `docs/results/ms6-backtest.md` |
+| MS6 | Determinism, same job twice | identical | 150 of 150 equal (main vs ablation sweeps) | same |
+| MS6 | Strategy 5 (ext) PnL per stock-day, validation | - | large-tick -$0.99 [-7.83, 5.98] (1.3 fills); small-tick -$4,176 [-4,807, -3,620] | same; CI over 25 stocks, one day |
+| MS6 | Best non-sanity PnL per stock-day | - | large-tick dp_signal +$0.61 [-3.47, 5.98]; small-tick naive -$2,582 [-3,337, -1,860]; none above 0 with CI | same |
+| MS6 | Foresight bound (1 s, sanity) | > 0 | large-tick +$5,808, small-tick +$26,496 | same |
+| MS6 | Ablation vs ext, small-tick | - | no toxicity +$234, no taking +$287, both removed (dp_signal) +$318 | same |
+| MS6 | Latency 0 to 500 us, ext | - | large-tick -$0.99 to -$16.46; small-tick -$4,176 to -$3,947 | same |
+| MS6 | AS small-tick | quotes | 0 orders: fitted k 0.027/tick gives 21.0-tick distance, collar 20 ticks rejects all (miss) | same |
+| MS6 | AS closed forms vs numerical HJB | match | max 1.8e-12 ticks at 23,400 s | `research/hjb.py` |
 | MS7 | QR parameter recovery (simulate, ingest, recalibrate) | within errors | rates within 5 SE, z mean/sd in band, theta within 4 SE; half tick too | `research/tests/test_qr.py` |
 | MS7 | Method A, leave-stocks-out R2 (spread / depth / turnover) | - | 0.939 / 0.878 / 0.869 (3,801 stocks) | `docs/results/ms7-regime.md` |
 | MS7 | Method A vs Tick Size Pilot (x5 tick, TG1) | direction and size | spread +31% (published +17%), depth +293% (+275%) | same |
