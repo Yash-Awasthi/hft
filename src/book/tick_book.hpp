@@ -117,6 +117,69 @@ class TickBook {
         if (i == kNoOrder || o_.next(i) == kNoOrder) return std::nullopt;
         return view(o_.next(i));
     }
+    // Head order of the nearest level on `side` strictly worse than `px`.
+    std::optional<OrderView> next_level(Side side, std::uint32_t px) const {
+        const int s = static_cast<int>(side);
+        std::uint32_t best_px = 0;
+        const Level* best_l = nullptr;
+        auto consider = [&](std::uint32_t p, const Level* l) {
+            if (!best_l || worse(s, best_px, p)) best_px = p, best_l = l;
+        };
+        if (tick_) {
+            // Window: indices whose price is strictly worse than px.
+            if (s == 0) {
+                if (px > base_) {
+                    const std::uint64_t lim = (std::uint64_t{px} - base_ + tick_ - 1) / tick_;
+                    if (std::uint32_t k; win_below(
+                            s, static_cast<std::uint32_t>(std::min<std::uint64_t>(lim, kLevels)),
+                            k))
+                        consider(base_ + k * tick_, &win_[s][k]);
+                }
+            } else {
+                const std::uint64_t from = px < base_ ? 0 : (std::uint64_t{px} - base_) / tick_ + 1;
+                if (std::uint32_t k;
+                    from < kLevels && win_from(s, static_cast<std::uint32_t>(from), k))
+                    consider(base_ + k * tick_, &win_[s][k]);
+            }
+            // Radix, on tick indices.
+            if (kLevels) {
+                std::uint32_t g;
+                const std::uint64_t ceil = (std::uint64_t{px} + tick_ - 1) / tick_;
+                const bool found =
+                    s == 0 ? (ceil >= LevelRadix<Level>::kRange
+                                  ? deep_[s].extreme(true, g)
+                                  : deep_[s].next(true, static_cast<std::uint32_t>(ceil), g))
+                           : px / tick_ < LevelRadix<Level>::kRange &&
+                                 deep_[s].next(false, px / tick_, g);
+                if (found) consider(g * tick_, &deep_[s].at(g));
+            }
+        }
+        // Off-grid array, worst first: the last entry strictly worse than px.
+        const OverLevel* b = &over_[s][0];
+        const OverLevel* e = b + n_over_[s];
+        const OverLevel* it = std::lower_bound(
+            b, e, px, [s](const OverLevel& o, std::uint32_t p) { return worse(s, o.px, p); });
+        if (it != b) consider((it - 1)->px, &(it - 1)->l);
+        if (!best_l) return std::nullopt;
+        return view(best_l->head);
+    }
+
+    // Shares resting at one price on one side.
+    std::uint64_t level_qty(Side side, std::uint32_t px) const {
+        const int s = static_cast<int>(side);
+        if (const std::uint32_t k = slot(px); k != kNoOrder)
+            return (bits_[s][k / 64] >> (k % 64)) & 1 ? win_[s][k].qty : 0;
+        if (const std::uint32_t g = grid(px); g != kNoOrder) {
+            const Level* l = deep_[s].find(g);
+            return l ? l->qty : 0;
+        }
+        const OverLevel* b = &over_[s][0];
+        const OverLevel* e = b + n_over_[s];
+        const OverLevel* it = std::lower_bound(
+            b, e, px, [s](const OverLevel& o, std::uint32_t p) { return worse(s, o.px, p); });
+        return it != e && it->px == px ? it->l.qty : 0;
+    }
+
     std::optional<OrderView> order(std::uint64_t ref) const {
         const std::uint32_t i = ids_.find(ref);
         if (i == kNoOrder) return std::nullopt;
@@ -409,6 +472,33 @@ class TickBook {
         OverLevel* e = &over_[s][0] + n_over_[s];
         std::memmove(it, it + 1, static_cast<std::size_t>(e - it - 1) * sizeof(OverLevel));
         --n_over_[s];
+    }
+
+    // Highest non-empty window index below k, and lowest at or above k.
+    bool win_below(int s, std::uint32_t k, std::uint32_t& out) const {
+        if (k == 0) return false;
+        std::uint32_t w = (k - 1) / 64;
+        std::uint64_t x = bits_[s][w] & (~0ull >> (63 - (k - 1) % 64));
+        if (!x) {
+            const std::uint64_t below = summary_[s] & ((1ull << w) - 1);
+            if (!below) return false;
+            w = 63 - static_cast<std::uint32_t>(std::countl_zero(below));
+            x = bits_[s][w];
+        }
+        out = w * 64 + 63 - static_cast<std::uint32_t>(std::countl_zero(x));
+        return true;
+    }
+    bool win_from(int s, std::uint32_t k, std::uint32_t& out) const {
+        std::uint32_t w = k / 64;
+        std::uint64_t x = bits_[s][w] & (~0ull << (k % 64));
+        if (!x) {
+            const std::uint64_t above = w + 1 < 64 ? summary_[s] & (~0ull << (w + 1)) : 0;
+            if (!above) return false;
+            w = static_cast<std::uint32_t>(std::countr_zero(above));
+            x = bits_[s][w];
+        }
+        out = w * 64 + static_cast<std::uint32_t>(std::countr_zero(x));
+        return true;
     }
 
     void set_bit(int s, std::uint32_t k) {

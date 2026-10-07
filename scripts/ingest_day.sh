@@ -2,6 +2,7 @@
 # Downloads one Nasdaq ITCH day, verifies it and ingests it into the per-symbol store.
 # Usage: scripts/ingest_day.sh <remote-file-name>      e.g. S121225-v50.txt.gz
 # Env: HFT_DATA (default ~/data), HFT_INGEST (default build/release/apps/ingest),
+#      HFT_CHECKPOINT (default build/release/apps/checkpoint),
 #      KEEP_GZ=1 to keep the download (deleted after a successful ingest by default).
 # Only the 2018 to 2020 files publish an .md5sum; for the rest the gzip CRC checked while
 # decompressing and the SHA-256 recorded by ingest are the integrity record.
@@ -11,6 +12,7 @@ name=${1:?usage: ingest_day.sh <remote-file-name>}
 base=${HFT_BASE:-"https://emi.nasdaq.com/ITCH/Nasdaq%20ITCH"}
 data=${HFT_DATA:-$HOME/data}
 ingest=${HFT_INGEST:-$(dirname "$0")/../build/release/apps/ingest}
+checkpoint=${HFT_CHECKPOINT:-$(dirname "$0")/../build/release/apps/checkpoint}
 gz="$data/$name"
 store="$data/store-${name%%.*}"
 
@@ -38,4 +40,5 @@ if md5_line=$(curl -sf --http1.1 "$base/$name.md5sum"); then
 fi
 
 "$ingest" "$store" "$gz"
+"$checkpoint" "$store"
 [ "${KEEP_GZ:-0}" = 1 ] || rm "$gz"

@@ -278,3 +278,28 @@ TEST(TickBookTick, HalfPennyGrid) {
     ASSERT_TRUE(b.add(5, kB, 100, 3'0050, 5));
     EXPECT_EQ(b.overflow_levels(), 0u);
 }
+
+// Walking levels outward from the best visits every level once, in price order, across the
+// window, the radix and the off-grid array.
+TYPED_TEST(TickQueue, NextLevelWalksAllLevelsInOrder) {
+    TypeParam b;
+    const std::uint32_t bids[] = {50'0000, 49'9900, 45'0000, 30'0000, 49'9950, 1'0000};
+    std::uint64_t ref = 1;
+    for (std::uint32_t px : bids) {
+        b.add(ref, kB, 10, px, ref);
+        ++ref;
+    }
+    b.add(ref, kB, 5, 45'0000, ref);
+    ++ref;
+    std::vector<std::uint32_t> got;
+    for (auto f = b.front(kB); f; f = b.next_level(kB, f->price)) got.push_back(f->price);
+    EXPECT_EQ(got,
+              (std::vector<std::uint32_t>{50'0000, 49'9950, 49'9900, 45'0000, 30'0000, 1'0000}));
+    EXPECT_EQ(b.level_qty(kB, 45'0000), 15u);
+    EXPECT_EQ(b.level_qty(kB, 45'0100), 0u);
+    b.add(ref, kS, 10, 50'0100, ref);
+    b.add(ref + 1, kS, 10, 60'0000, ref + 1);
+    got.clear();
+    for (auto f = b.front(kS); f; f = b.next_level(kS, f->price)) got.push_back(f->price);
+    EXPECT_EQ(got, (std::vector<std::uint32_t>{50'0100, 60'0000}));
+}

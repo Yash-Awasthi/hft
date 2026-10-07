@@ -107,6 +107,18 @@ void run(const std::vector<Op>& ops) {
                 ((RC_ASSERT(b.bbo() == bbo)), ...);
                 ((RC_ASSERT(b.order_count() == ref_book.order_count())), ...);
                 ((RC_ASSERT(b.check())), ...);
+                (
+                    [&] {
+                        if constexpr (requires { b.next_level(Side::Buy, 0u); }) {
+                            for (Side sd : {Side::Buy, Side::Sell}) {
+                                std::vector<std::pair<std::uint32_t, std::uint64_t>> walk;
+                                for (auto f = b.front(sd); f; f = b.next_level(sd, f->price))
+                                    walk.emplace_back(f->price, b.level_qty(sd, f->price));
+                                RC_ASSERT(walk == ref_book.depth(sd));
+                            }
+                        }
+                    }(),
+                    ...);
                 if (!m.refs.empty()) {
                     const std::uint64_t r = m.refs[op.pick % m.refs.size()];
                     ((RC_ASSERT(b.queue_ahead(r) == ref_book.queue_ahead(r))), ...);
@@ -195,6 +207,13 @@ RC_GTEST_PROP(LevelRadixProp, MatchesStdMap,
         }
         RC_ASSERT(r.count() == want.size());
         RC_ASSERT((r.find(idx) != nullptr) == want.contains(idx));
+        std::uint32_t nb, na;
+        const auto lo_it = want.lower_bound(idx);
+        const auto hi_it = want.upper_bound(idx);
+        RC_ASSERT(r.next(true, idx, nb) == (lo_it != want.begin()));
+        if (lo_it != want.begin()) RC_ASSERT(nb == std::prev(lo_it)->first);
+        RC_ASSERT(r.next(false, idx, na) == (hi_it != want.end()));
+        if (hi_it != want.end()) RC_ASSERT(na == hi_it->first);
         std::uint32_t lo, hi;
         RC_ASSERT(r.extreme(false, lo) == !want.empty());
         if (!want.empty()) {

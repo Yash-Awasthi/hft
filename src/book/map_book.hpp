@@ -9,6 +9,8 @@
 #include <list>
 #include <map>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include "book/types.hpp"
 
@@ -90,6 +92,16 @@ class MapBook {
             return true;
         };
         return side_ok(bids_, Side::Buy) && side_ok(asks_, Side::Sell) && n == orders_.size();
+    }
+
+    // Every level of a side, best first, as (price, shares).
+    std::vector<std::pair<std::uint32_t, std::uint64_t>> depth(Side side) const {
+        std::vector<std::pair<std::uint32_t, std::uint64_t>> out;
+        if (side == Side::Buy)
+            for (const auto& [px, l] : bids_) out.emplace_back(px, l.qty);
+        else
+            for (const auto& [px, l] : asks_) out.emplace_back(px, l.qty);
+        return out;
     }
 
     // Shares resting ahead of `ref` at its level; -1 if unknown.

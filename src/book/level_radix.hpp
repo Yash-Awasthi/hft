@@ -44,6 +44,8 @@ class LevelRadix {
         return (pg.bits[o / 64] >> (o % 64)) & 1 ? &pg.lv[o] : nullptr;
     }
 
+    const Level* find(std::uint32_t idx) const { return const_cast<LevelRadix*>(this)->find(idx); }
+
     // Returns the level, creating an empty one if absent.
     Level& get(std::uint32_t idx) {
         const std::uint32_t t = idx >> 16, mi = (idx >> 8) & 255, o = idx & 255;
@@ -94,6 +96,29 @@ class LevelRadix {
         const std::uint32_t mi = pick(m.bits, want_max);
         const Page& pg = pages_[m.child[mi]];
         idx = (t << 16) | (mi << 8) | pick(pg.bits, want_max);
+        return true;
+    }
+
+    // Nearest present index strictly below (down) or above idx; false when none.
+    bool next(bool down, std::uint32_t idx, std::uint32_t& out) const {
+        if (!count_) return false;
+        const std::uint32_t t = idx >> 16, mi = (idx >> 8) & 255, o = idx & 255;
+        std::uint32_t k;
+        if (top_[t] != kNone) {
+            const Mid& m = mids_[top_[t]];
+            if (m.child[mi] != kNone && scan(pages_[m.child[mi]].bits, o, down, k)) {
+                out = (t << 16) | (mi << 8) | k;
+                return true;
+            }
+            if (scan(m.bits, mi, down, k)) {
+                out = (t << 16) | (k << 8) | pick(pages_[m.child[k]].bits, down);
+                return true;
+            }
+        }
+        if (!scan(top_bits_, t, down, k)) return false;
+        const Mid& m = mids_[top_[k]];
+        const std::uint32_t j = pick(m.bits, down);
+        out = (k << 16) | (j << 8) | pick(pages_[m.child[j]].bits, down);
         return true;
     }
 
@@ -172,6 +197,30 @@ class LevelRadix {
         for (int w = 0;; ++w)
             if (b[w]) return static_cast<std::uint32_t>(w * 64 + std::countr_zero(b[w]));
     }
+    // Highest set bit strictly below pos (down) or lowest strictly above it.
+    static bool scan(const std::uint64_t (&b)[4], std::uint32_t pos, bool down,
+                     std::uint32_t& out) {
+        const std::uint32_t w = pos / 64, bit = pos % 64;
+        if (down) {
+            std::uint64_t x = b[w] & ((1ull << bit) - 1);
+            for (int i = static_cast<int>(w);; x = b[--i]) {
+                if (x) {
+                    out = static_cast<std::uint32_t>(i * 64 + 63 - std::countl_zero(x));
+                    return true;
+                }
+                if (i == 0) return false;
+            }
+        }
+        std::uint64_t x = bit == 63 ? 0 : b[w] & ~((2ull << bit) - 1);
+        for (std::uint32_t i = w;; x = b[++i]) {
+            if (x) {
+                out = i * 64 + static_cast<std::uint32_t>(std::countr_zero(x));
+                return true;
+            }
+            if (i == 3) return false;
+        }
+    }
+
     template <class F>
     static void for_bits(const std::uint64_t (&b)[4], F&& f) {
         for (std::uint32_t w = 0; w < 4; ++w)
