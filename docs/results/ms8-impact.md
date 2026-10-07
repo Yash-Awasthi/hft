@@ -61,23 +61,83 @@ G is in dollars per trade sign; the column divides by nothing, so compare within
 
 ## By group
 
-| Group | Stocks | kappa median | Hurst median | psi median | psi IQR | Kernels failing the check | Attributed runs |
+| Group | Stocks | kappa median | Hurst median | psi median | psi IQR | Unregularized kernels failing the check | Attributed runs |
 |---|---|---|---|---|---|---|---|
 | large_tick | 25 | 0.32 | 0.494 | 0.45 | 0.43 to 0.48 | 25 of 25 | 32 |
 | small_tick | 25 | 0.59 | 0.522 | 0.45 | 0.43 to 0.49 | 25 of 25 | 51 |
 
-## Execution schedules under the fitted kernel
+## Parametric kernel
 
-Cost of executing X over n equal slots, x' Gamma x / 2 with Gamma_ij = G(|i - j|), relative to TWAP. The empirical kernels do not decay (above), so a decaying power law G(l) = G(1) l^-beta is fitted to lags 1 to 50 of each group's median kernel and used here.
+G(l) = G0 (1 + l / l0)^-beta fitted to R(1..250) by bounded least squares (G0 >= 0, beta in [0, 3], l0 in [0.1, 10^4]), the kernel summed over all 500 lags of C. G0 >= 0 and beta >= 0 make G positive, decreasing and convex, so the Toeplitz matrix is positive semi-definite (Polya) by construction; the minimum eigenvalue over lags 0..500 is reported as a check. Fit error: RMSE of R over mean |R|.
 
-| Group | beta | n | Optimal / TWAP cost | Front-loading x1 / (X/n) |
-|---|---|---|---|---|
-| large_tick | 0.06 | 10 | 0.998 | -0.86 |
-| large_tick | 0.06 | 50 | 0.993 | 6.57 |
-| small_tick | 0.07 | 10 | 0.998 | -0.93 |
-| small_tick | 0.07 | 50 | 0.991 | 6.14 |
+| Group | Stock | G0 bp of mid | l0 | beta | Fit error | Min eig | At a bound |
+|---|---|---|---|---|---|---|---|
+| large_tick | AAL | 39.744 | 2.11 | 0.168 | 0.071 | 1.52e-04 | no |
+| large_tick | BAC | 40.973 | 1796.09 | 3.000 | 0.022 | 3.42e-06 | yes |
+| large_tick | BKR | 55.036 | 1603.26 | 3.000 | 0.023 | 5.15e-06 | yes |
+| large_tick | CARR | 55.164 | 2097.14 | 3.000 | 0.040 | 3.95e-06 | yes |
+| large_tick | CFLT | 5.017 | 63.02 | 0.180 | 0.122 | 7.15e-07 | no |
+| large_tick | CIFR | 55.107 | 198.14 | 0.733 | 0.027 | 1.02e-05 | no |
+| large_tick | CMCSA | 31.410 | 156.01 | 0.000 | 0.062 | -1.73e-15 | yes |
+| large_tick | CSCO | 47.662 | 3005.48 | 3.000 | 0.042 | 2.38e-06 | yes |
+| large_tick | EXAS | 20.383 | 37.90 | 0.383 | 0.078 | 1.03e-05 | no |
+| large_tick | GM | 69.514 | 21.95 | 0.198 | 0.027 | 3.14e-05 | no |
+| large_tick | INTC | 38.983 | 63.71 | 0.275 | 0.027 | 8.42e-06 | no |
+| large_tick | MDLZ | 46.283 | 297.40 | 0.982 | 0.052 | 7.64e-06 | no |
+| large_tick | NFLX | 33.287 | 14.24 | 0.090 | 0.013 | 1.05e-05 | no |
+| large_tick | NVDA | 58.474 | 0.65 | 0.085 | 0.011 | 3.13e-04 | no |
+| large_tick | ONDS | 66.246 | 0.31 | 0.159 | 0.038 | 1.06e-03 | no |
+| large_tick | PYPL | 53.458 | 8065.80 | 3.000 | 0.045 | 9.94e-07 | yes |
+| large_tick | RGTI | 56.490 | 0.10 | 0.086 | 0.057 | 8.87e-04 | yes |
+| large_tick | RIVN | 48.599 | 0.65 | 0.042 | 0.032 | 1.30e-04 | no |
+| large_tick | SMCI | 52.670 | 11.42 | 0.115 | 0.040 | 2.65e-05 | no |
+| large_tick | SOFI | 52.915 | 0.43 | 0.222 | 0.058 | 9.50e-04 | no |
+| large_tick | VZ | 34.540 | 10000.00 | 0.000 | 0.115 | -1.26e-15 | yes |
+| large_tick | WBD | 30.819 | 12.41 | 0.258 | 0.033 | 3.20e-05 | no |
+| large_tick | WFC | 66.876 | 2.49 | 0.096 | 0.035 | 1.25e-04 | no |
+| large_tick | WMT | 59.530 | 10000.00 | 0.000 | 0.038 | -9.15e-15 | yes |
+| large_tick | XOM | 61.918 | 0.10 | 0.040 | 0.048 | 4.74e-04 | yes |
+| small_tick | ADBE | 127.239 | 6334.27 | 3.000 | 0.032 | 3.01e-06 | yes |
+| small_tick | AMD | 137.486 | 0.10 | 0.093 | 0.012 | 2.32e-03 | yes |
+| small_tick | APP | 598.589 | 0.10 | 0.057 | 0.043 | 6.42e-03 | yes |
+| small_tick | AVGO | 100.107 | 10000.00 | 0.000 | 0.045 | -4.93e-15 | yes |
+| small_tick | COIN | 156.262 | 0.10 | 0.001 | 0.057 | 1.66e-05 | yes |
+| small_tick | COST | 209.143 | 0.10 | 0.047 | 0.034 | 1.86e-03 | yes |
+| small_tick | CRH | 59.204 | 270.17 | 0.109 | 0.026 | 1.20e-06 | no |
+| small_tick | CRWV | 74.160 | 31.17 | 0.101 | 0.022 | 1.20e-05 | no |
+| small_tick | CVNA | 397.282 | 5917.38 | 3.000 | 0.046 | 1.01e-05 | yes |
+| small_tick | GOOG | 77.103 | 0.10 | 0.031 | 0.027 | 4.59e-04 | yes |
+| small_tick | HOOD | 135.527 | 0.10 | 0.080 | 0.041 | 1.99e-03 | yes |
+| small_tick | JPM | 134.694 | 301.83 | 0.272 | 0.029 | 6.06e-06 | no |
+| small_tick | LRCX | 103.581 | 10000.00 | 0.000 | 0.091 | -7.73e-15 | yes |
+| small_tick | META | 210.403 | 0.10 | 0.064 | 0.026 | 2.53e-03 | yes |
+| small_tick | MRVL | 78.295 | 5.17 | 0.121 | 0.028 | 9.09e-05 | no |
+| small_tick | MSFT | 92.208 | 0.41 | 0.033 | 0.022 | 2.72e-04 | no |
+| small_tick | MSTR | 169.307 | 3.75 | 0.129 | 0.021 | 2.86e-04 | no |
+| small_tick | MU | 144.609 | 6.60 | 0.144 | 0.016 | 1.58e-04 | no |
+| small_tick | ORCL | 108.429 | 0.10 | 0.054 | 0.044 | 1.11e-03 | yes |
+| small_tick | PEP | 66.289 | 579.02 | 1.276 | 0.042 | 7.30e-06 | no |
+| small_tick | PLTR | 99.678 | 0.10 | 0.080 | 0.027 | 1.47e-03 | yes |
+| small_tick | QCOM | 52.734 | 0.10 | 0.008 | 0.055 | 8.71e-05 | yes |
+| small_tick | RKLB | 78.154 | 0.10 | 0.018 | 0.020 | 2.68e-04 | yes |
+| small_tick | TSLA | 131.534 | 0.10 | 0.119 | 0.018 | 2.78e-03 | yes |
+| small_tick | TSM | 113.246 | 477.79 | 0.119 | 0.025 | 1.41e-06 | no |
 
-With beta near zero the kernel is close to permanent impact: TWAP is within 1% of the optimum, and the unconstrained optimum alternates in sign (negative front-loading means a first trade against the direction), which a long-only schedule would not allow. The empirical kernels fail the positivity check because the unregularized least-squares G rises at long lags; a regularized or parametric fit is needed before the kernel is used for execution.
+| Group | Stocks | Parametric kernels failing the check | beta median | Fit error median | At a bound |
+|---|---|---|---|---|---|
+| large_tick | 25 | 0 of 25 | 0.180 | 0.040 | 10 |
+| small_tick | 25 | 0 of 25 | 0.080 | 0.028 | 16 |
+
+## Execution schedules under the parametric kernel
+
+Cost of executing X over n equal slots, x' Gamma x / 2 with Gamma_ij = G(|i - j|), relative to TWAP, with the group's median l0 and beta (G0 cancels in the ratio).
+
+| Group | l0 | beta | n | Optimal / TWAP cost | Front-loading x1 / (X/n) |
+|---|---|---|---|---|---|
+| large_tick | 37.90 | 0.180 | 10 | 0.996 | 4.50 |
+| large_tick | 37.90 | 0.180 | 50 | 0.985 | 16.64 |
+| small_tick | 0.41 | 0.080 | 10 | 0.994 | 2.00 |
+| small_tick | 0.41 | 0.080 | 50 | 0.992 | 4.32 |
 
 ## Not built
 

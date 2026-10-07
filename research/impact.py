@@ -40,14 +40,46 @@ def response(eps, m, lmax):
     return np.array([np.mean(eps[:-l] * (m[l:] - m[:-l])) for l in range(1, lmax + 1)])
 
 
-def propagator(R, C, L):
-    """G(1..L) from R(1..L) and C(0..L) (C normalized so C(0) = 1)."""
+def design_matrix(C, L, K=None):
+    """A with R(1..L) = A G(1..K) (K = L by default), from C(0..) normalized so C(0) = 1."""
     C = np.asarray(C, float) / C[0]
     Cfull = lambda k: C[np.minimum(np.abs(k), len(C) - 1)] * (np.abs(k) < len(C))
     l = np.arange(1, L + 1)[:, None]
-    n = np.arange(1, L + 1)[None, :]
-    A = Cfull(l - n) - Cfull(n)
-    return np.linalg.lstsq(A, np.asarray(R[:L], float), rcond=None)[0]
+    n = np.arange(1, (K or L) + 1)[None, :]
+    return Cfull(l - n) - Cfull(n)
+
+
+def propagator(R, C, L):
+    """G(1..L) from R(1..L) and C(0..L) by unconstrained least squares."""
+    return np.linalg.lstsq(design_matrix(C, L), np.asarray(R[:L], float), rcond=None)[0]
+
+
+def power_law_kernel(p, L):
+    """G(0..L) = G0 (1 + l / l0)^-beta."""
+    return p["G0"] * (1 + np.arange(L + 1) / p["l0"]) ** -p["beta"]
+
+
+def propagator_power_law(R, C, L):
+    """G0, l0, beta of G(l) = G0 (1 + l / l0)^-beta fitted to R(1..L) by bounded least squares,
+    the kernel summed over every lag of C (a kernel cut at L biases the fit). G0 >= 0 and beta >= 0 make G positive, decreasing and convex, so every Toeplitz matrix of it
+    is positive semi-definite (Polya) and the no-arbitrage check holds by construction."""
+    from scipy.optimize import least_squares
+
+    K = len(C) - 1
+    A, R = design_matrix(C, L, K), np.asarray(R[:L], float)
+    scale = max(float(np.abs(R).max()), 1e-300)
+    lag = np.arange(1, K + 1)
+    resid = lambda x: (A @ (x[0] * (1 + lag / np.exp(x[1])) ** -x[2]) - R) / scale
+    best = None
+    for l0 in (1.0, 10.0, 100.0):
+        for beta in (0.1, 0.5):
+            x0 = [max(R[0], 0.0) + 1e-12, np.log(l0), beta]
+            r = least_squares(resid, x0, bounds=([0, np.log(0.1), 0], [np.inf, np.log(1e4), 3]))
+            if best is None or r.cost < best.cost:
+                best = r
+    G0, ll0, beta = best.x
+    return {"G0": float(G0), "l0": float(np.exp(ll0)), "beta": float(beta),
+            "rmse": float(np.sqrt(2 * best.cost / L) * scale)}
 
 
 def hurst(m, lags=(1, 2, 4, 8, 16, 32, 64, 128, 256)):
@@ -159,7 +191,7 @@ def analyze_symbol(hftpy, stores, sym, start, end, lmax=500):
     out = {"symbol": sym, "trades": int(len(eps)), "mean_sign": float(eps.mean()),
            "C": (C / C[0])[:lmax + 1].tolist(), "R": R.tolist(), "G": G.tolist(), "hurst": H,
            "kernel_min_eig": min_eigenvalue(np.r_[G[0], G]), "sign_runs": int(len(q_r)),
-           "attributed_runs": len(attr)}
+           "attributed_runs": len(attr), "G_power": propagator_power_law(R, C, lmax // 2)}
     lags = np.arange(1, lmax + 1)
     good = (C[1:] / C[0]) > 0
     out["kappa"] = float(-np.polyfit(np.log(lags[good][9:200]), np.log((C[1:] / C[0])[good][9:200]), 1)[0])

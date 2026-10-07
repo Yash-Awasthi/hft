@@ -73,6 +73,30 @@ def test_kernel_positive_definiteness_check():
     assert impact.min_eigenvalue(bad) < 0
 
 
+def test_parametric_propagator_recovers_power_law_and_passes_the_check():
+    n, lmax = 400_000, 3000
+    eps = long_memory_signs(n, seed=1)
+    lag = np.arange(1, lmax + 1)
+    G = 0.5 * (1.0 + lag) ** -0.4
+    rng = np.random.default_rng(2)
+    m = np.convolve(eps, np.r_[0.0, G])[:n] + np.cumsum(rng.normal(0, 0.05, n))
+    C, R = impact.sign_acf(eps, 2000), impact.response(eps, m, 300)
+    p = impact.propagator_power_law(R, C, 300)
+    assert abs(p["beta"] - 0.4) < 0.08 and abs(p["G0"] / 0.5 - 1) < 0.15, p
+    assert impact.min_eigenvalue(impact.power_law_kernel(p, 300)) >= -1e-12
+
+
+def test_parametric_propagator_stays_admissible_when_least_squares_rises():
+    eps = long_memory_signs(100_000, seed=5)
+    C = impact.sign_acf(eps, 200)
+    lag = np.arange(1, 201)
+    G_bad = 0.3 + 0.002 * lag  # rising kernel, as the unregularized fit gives on real data
+    R = (impact.design_matrix(C, 200) @ G_bad) + np.random.default_rng(6).normal(0, 1e-3, 200)
+    assert impact.min_eigenvalue(np.r_[G_bad[0], G_bad]) < 0
+    p = impact.propagator_power_law(R, C, 200)
+    assert p["beta"] >= 0 and impact.min_eigenvalue(impact.power_law_kernel(p, 200)) >= -1e-12
+
+
 if __name__ == "__main__":
     for name, f in list(globals().items()):
         if name.startswith("test_"):

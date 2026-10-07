@@ -157,6 +157,7 @@ task finishes or blocks.
 | MS7 | Method C at the current tick, depth | validated | median log error 1.75 (x5.8); INTC 133 sim moves vs 7,241 real (miss) | same |
 | MS8 | Square-root exponent, sign-run metaorders | ~0.5 | median 0.45 both groups (IQR 0.43 to 0.49) | `docs/results/ms8-impact.md` |
 | MS8 | Propagator kernel no-arbitrage check | positive definite | fails in 50 of 50 stocks (unregularized G rises at long lags) | same |
+| MS8 | Parametric kernel G0 (1 + l/l0)^-beta, no-arbitrage check | positive definite | passes 50 of 50; median fit error 4.0% / 2.8% of mean abs R (large / small); 26 of 50 fits at a parameter bound | same |
 | MS8 | Mechanical vs reactive split | done | not built (simulator failed validation) | same |
 | MS9 | Kernel vs PyTorch, 200k INTC events | match | max error 6.7e-6, forecast decisions 100% equal | `docs/results/ms9-transformer.md` |
 | MS9 | Step latency, AVX2 float32 (provisional) | < 2 us | 2.2 to 2.5 us median (miss) | `hft_bench --benchmark_filter=EventStep` |
