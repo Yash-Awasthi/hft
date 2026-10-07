@@ -59,7 +59,22 @@ task finishes or blocks.
 
 ## In progress
 
-- MS6: quoting and backtest.
+- MS6: quoting and backtest. Done: exact integer accounting with the PnL identity checked
+  every event; event-driven backtest (three latencies, real-order marks, risk checks,
+  hysteresis, in-flight takes in the position limit); zero, random, perfect-foresight, naive,
+  Avellaneda-Stoikov (GLFT) strategies; the DP quoting MDP (100 ms grid, counterfactual queue
+  replay, exact policy iteration cross-checked against value iteration and brute force) with
+  C++ table serving; strategy 5 extensions (toxicity guard, aggressive taking) with ablation
+  switches; day-clustered bootstrap, deflated Sharpe, CRPS; sweep orchestrator
+  (`research/backtests.py`) writing Parquet and a registry row.
+  Sanity on INTC, 2025-12-08: zero 0; random taking -0.61 c/share spread (about half the
+  spread) and -0.30 c/share fees; random passive +0.49 c/share spread; perfect foresight
+  +$13,061.
+  Running: `research/run_dp.py` solving the four policy tables from the train days
+  (output `~/data/policies`). Next: validation-day sweep of strategies 1 to 5, latency
+  sweep, fee and fill-rule sensitivity, ablations, report.
+  Not yet built: deep queue reservation, portfolio inventory, online recalibration, the
+  numerical HJB check of the Avellaneda-Stoikov closed form.
 
 ## Needs you
 
@@ -87,7 +102,12 @@ task finishes or blocks.
    Recommended default, in use until you say otherwise: weights implied by a non-negative
    regression of QQQ mid returns on the Nasdaq-listed universe stocks' mid returns over the
    train days. Fee schedules, half-penny eligibility and the Tokyo / Tick Size Pilot results
-   are needed from MS6 and MS7; I will try public sources first.
+   are needed from MS6 and MS7; I will try public sources first. In use until confirmed
+   (`configs/fees.toml`): maker rebate $0.0020 and taker fee $0.0030 (30 mil cap), $0.0007 and
+   $0.0010 under the 10 mil cap, Section 31 at $27.80 per $1M, FINRA TAF $0.000166 per share
+   up to $8.30.
+7. **CI cost.** GitHub Actions minutes on the private repository are nearly used up. Making
+   the repository public (free minutes) is pending your action; pushes are held until then.
 
 ## Results
 
