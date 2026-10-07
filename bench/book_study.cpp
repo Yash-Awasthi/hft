@@ -155,6 +155,26 @@ std::vector<std::unique_ptr<Book>> make_books(const std::vector<std::size_t>& ca
     return v;
 }
 
+// Replay-only variant: prefetch the ID slot kFar events ahead.
+template <class Book>
+struct Prefetched : Book {
+    using Book::Book;
+};
+template <class B>
+inline constexpr bool kPrefetch = false;
+template <class B>
+inline constexpr bool kPrefetch<Prefetched<B>> = true;
+constexpr std::size_t kFar = 16;
+
+template <class Book>
+inline void warm(const std::vector<std::unique_ptr<Book>>& books, const std::vector<Event>& ev,
+                 std::size_t i) {
+    if constexpr (kPrefetch<Book>) {
+        if (i + kFar < ev.size() && ev[i + kFar].type != 'A')
+            books[ev[i + kFar].sym]->prefetch_id(ev[i + kFar].ref);
+    }
+}
+
 // One untimed pass and one pass timing every event, per repetition, on fresh books.
 template <class Book>
 void book_variant(const char* name, const std::vector<Event>& ev,
@@ -165,12 +185,16 @@ void book_variant(const char* name, const std::vector<Event>& ev,
         auto books = make_books<Book>(cap);
         std::uint64_t errors = 0;
         const std::uint64_t c0 = tsc::start();
-        for (std::size_t i = 0; i < ev.size(); ++i) errors += !apply(*books[ev[i].sym], ev[i], i);
+        for (std::size_t i = 0; i < ev.size(); ++i) {
+            warm(books, ev, i);
+            errors += !apply(*books[ev[i].sym], ev[i], i);
+        }
         const std::uint64_t batch = tsc::stop() - c0;
 
         books = make_books<Book>(cap);
         hdr_reset(h);
         for (std::size_t i = 0; i < ev.size(); ++i) {
+            warm(books, ev, i);
             const std::uint64_t a = tsc::start();
             errors += !apply(*books[ev[i].sym], ev[i], i);
             const std::uint64_t t = tsc::stop() - a;
@@ -248,6 +272,7 @@ void book_mode(const std::filesystem::path& dir, const std::vector<std::uint16_t
                  ev.size(), tpn, (unsigned long long)ovh, tsc::invariant());
     book_variant<book::MapBook>("map", ev, cap, reps, tpn, ovh);
     book_variant<Tick>("tick", ev, cap, reps, tpn, ovh);
+    book_variant<Prefetched<Tick>>("tick-prefetch", ev, cap, reps, tpn, ovh);
     book_variant<TickRh>("tick-rh", ev, cap, reps, tpn, ovh);
     book_variant<TickDm>("tick-dm", ev, cap, reps, tpn, ovh);
     book_variant<TickAos>("tick-aos", ev, cap, reps, tpn, ovh);

@@ -6,12 +6,14 @@
 #include <rapidcheck/gtest.h>
 
 #include <algorithm>
+#include <map>
 #include <tuple>
 #include <unordered_map>
 #include <vector>
 
 #include "book/btree_book.hpp"
 #include "book/id_map.hpp"
+#include "book/level_radix.hpp"
 #include "book/map_book.hpp"
 #include "book/tick_book.hpp"
 
@@ -36,6 +38,9 @@ std::uint32_t price_for(const Op& op) {
             return 100'0000 + op.price % 20000;  // off the penny grid
         case 2:
             return 1 + op.price % 1'2000;  // around and below $1
+        case 3:
+        case 4:
+            return 50'0000 + (op.price % 10000) * 100;  // on the grid, often beyond the window
         default:
             return 100'0000 + (op.price % 101) * 100 - 50 * 100;  // within 50 ticks
     }
@@ -169,4 +174,39 @@ RC_GTEST_PROP(IdMapProp, RobinHoodMatchesUnorderedMap,
 RC_GTEST_PROP(IdMapProp, DirectMatchesUnorderedMap,
               (const std::vector<std::pair<std::uint8_t, std::uint16_t>>& ops)) {
     map_matches<DirectMap<16>>(ops);
+}
+
+// Level radix against std::map: membership, extremes and in-order iteration.
+RC_GTEST_PROP(LevelRadixProp, MatchesStdMap,
+              (const std::vector<std::pair<bool, std::uint32_t>>& ops)) {
+    struct L {
+        std::uint64_t qty;
+    };
+    LevelRadix<L> r;
+    std::map<std::uint32_t, std::uint64_t> want;
+    for (const auto& [insert, raw] : ops) {
+        // Mostly clustered indices, sometimes anywhere in range.
+        const std::uint32_t idx = raw % 4 == 0 ? raw % LevelRadix<L>::kRange : 500'000 + raw % 2000;
+        if (insert) {
+            r.get(idx).qty += 1;
+            want[idx] += 1;
+        } else if (want.erase(idx)) {
+            r.erase(idx);
+        }
+        RC_ASSERT(r.count() == want.size());
+        RC_ASSERT((r.find(idx) != nullptr) == want.contains(idx));
+        std::uint32_t lo, hi;
+        RC_ASSERT(r.extreme(false, lo) == !want.empty());
+        if (!want.empty()) {
+            r.extreme(true, hi);
+            RC_ASSERT(lo == want.begin()->first);
+            RC_ASSERT(hi == want.rbegin()->first);
+        }
+    }
+    auto it = want.begin();
+    r.for_each([&](std::uint32_t idx, const L& l) {
+        RC_ASSERT(it != want.end() && it->first == idx && it->second == l.qty);
+        ++it;
+    });
+    RC_ASSERT(it == want.end());
 }

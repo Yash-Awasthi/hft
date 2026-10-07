@@ -47,6 +47,7 @@ class HotCold {
     std::uint32_t next(std::uint32_t i) const { return hot_[i].next; }
     std::uint32_t prev(std::uint32_t i) const { return hot_[i].prev; }
     std::uint64_t ref(std::uint32_t i) const { return cold_[i].ref; }
+    void prefetch(std::uint32_t i) const { __builtin_prefetch(&hot_[i]); }
     void set(std::uint32_t i, std::uint32_t px, std::uint32_t qty, std::uint32_t next,
              std::uint32_t prev, std::uint64_t ref, std::uint64_t seq) {
         hot_[i] = {px, qty, next, prev};
@@ -87,6 +88,7 @@ class Aos {
     std::uint32_t next(std::uint32_t i) const { return o_[i].next; }
     std::uint32_t prev(std::uint32_t i) const { return o_[i].prev; }
     std::uint64_t ref(std::uint32_t i) const { return o_[i].ref; }
+    void prefetch(std::uint32_t i) const { __builtin_prefetch(&o_[i]); }
     void set(std::uint32_t i, std::uint32_t px, std::uint32_t qty, std::uint32_t next,
              std::uint32_t prev, std::uint64_t ref, std::uint64_t seq) {
         o_[i] = {px, qty, next, prev, ref, seq};
@@ -128,6 +130,12 @@ class Soa {
     std::uint32_t next(std::uint32_t i) const { return next_[i]; }
     std::uint32_t prev(std::uint32_t i) const { return prev_[i]; }
     std::uint64_t ref(std::uint32_t i) const { return ref_[i]; }
+    void prefetch(std::uint32_t i) const {
+        __builtin_prefetch(&px_[i]);
+        __builtin_prefetch(&qty_[i]);
+        __builtin_prefetch(&next_[i]);
+        __builtin_prefetch(&prev_[i]);
+    }
     void set(std::uint32_t i, std::uint32_t px, std::uint32_t qty, std::uint32_t next,
              std::uint32_t prev, std::uint64_t ref, std::uint64_t seq) {
         px_[i] = px;

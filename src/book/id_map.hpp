@@ -38,6 +38,8 @@ class Table {
         for (std::size_t i = 0; i <= mask_; ++i) slots_[i].key = kEmpty;
         size_ = 0;
     }
+    void prefetch(std::uint64_t key) const { __builtin_prefetch(&slots_[home(key)]); }
+
     template <class F>
     void for_each(F&& f) const {
         for (std::size_t i = 0; i <= mask_; ++i)
@@ -211,6 +213,11 @@ class DirectMap {
         for (std::size_t i = 0; i < kSlots; ++i) slots_[i].key = detail::kEmpty;
         fallback_.clear();
         direct_ = 0;
+    }
+
+    void prefetch(std::uint64_t key) const {
+        __builtin_prefetch(&slots_[key & (kSlots - 1)]);
+        fallback_.prefetch(key);
     }
 
     std::uint32_t find(std::uint64_t key) const {
