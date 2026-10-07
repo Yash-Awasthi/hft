@@ -60,3 +60,5 @@ jobs:
       - run: python research/tests/test_estimators.py
       - run: python research/tests/test_dp.py
       - run: python research/tests/test_stats.py
+      - run: python research/tests/test_hjb.py
+      - run: python research/tests/test_backtest_report.py
