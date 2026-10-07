@@ -166,11 +166,8 @@ bool SymbolReader::next(Record& out) {
 }
 
 MergedReader::MergedReader(const std::filesystem::path& dir, std::vector<std::uint16_t> locates,
-                           std::size_t ahead)
-    : ahead_(ahead ? ahead : 1),
-      slots_(kWindow),
-      bits_(kWindow / 64, 0),
-      word_(kWindow / 64) {
+                           std::size_t ahead, unsigned threads)
+    : ahead_(ahead ? ahead : 1), slots_(kWindow), bits_(kWindow / 64, 0), word_(kWindow / 64) {
     for (std::uint16_t loc : locates) {
         auto idx = read_index(dir, loc);
         if (idx.empty()) continue;
@@ -182,7 +179,7 @@ MergedReader::MergedReader(const std::filesystem::path& dir, std::vector<std::ui
     std::sort(order_.begin(), order_.end(),
               [](const Pending& a, const Pending& b) { return a.first_seq < b.first_seq; });
     std::make_heap(heap_.begin(), heap_.end(), std::greater<>());
-    thread_ = std::thread([this] { run(); });
+    for (unsigned t = 0; t < std::max(threads, 1u); ++t) threads_.emplace_back([this] { run(); });
 }
 
 MergedReader::~MergedReader() {
@@ -191,50 +188,60 @@ MergedReader::~MergedReader() {
         stop_ = true;
     }
     space_.notify_all();
-    thread_.join();
+    for (auto& t : threads_) t.join();
 }
 
 void MergedReader::run() {
     try {
         std::vector<std::uint8_t> comp;
-        for (const Pending& p : order_) {
+        for (;;) {
+            std::size_t k;
             std::vector<std::uint8_t> raw;
             {
                 std::unique_lock lock(mu_);
-                space_.wait(lock, [this] { return ready_.size() < ahead_ || stop_; });
-                if (stop_) return;
+                space_.wait(lock, [this] {
+                    return claimed_ == order_.size() || claimed_ - popped_ < ahead_ || stop_;
+                });
+                if (stop_ || claimed_ == order_.size()) return;
+                k = claimed_++;
+                ready_.push_back({order_[k].sym, {}});
                 if (!spare_.empty()) {
                     raw = std::move(spare_.back());
                     spare_.pop_back();
                 }
             }
+            const Pending& p = order_[k];
             read_chunk(syms_[p.sym].zst_path, p.entry, comp, raw);
             std::lock_guard lock(mu_);
-            ready_.push_back({p.sym, std::move(raw)});
-            data_.notify_one();
+            Ready& r = ready_[k - popped_];
+            r.raw = std::move(raw);
+            r.done = true;
+            ++done_;
+            if (k == popped_ || done_ == order_.size()) data_.notify_all();
         }
     } catch (...) {
         std::lock_guard lock(mu_);
-        error_ = std::current_exception();
+        if (!error_) error_ = std::current_exception();
         data_.notify_all();
     }
 }
 
 void MergedReader::take_chunk(std::uint32_t sym) {
     std::unique_lock lock(mu_);
-    data_.wait(lock, [this] { return !ready_.empty() || error_; });
-    if (ready_.empty()) std::rethrow_exception(error_);
+    data_.wait(lock, [this] { return (!ready_.empty() && ready_.front().done) || error_; });
+    if (ready_.empty() || !ready_.front().done) std::rethrow_exception(error_);
     if (ready_.front().sym != sym) throw std::logic_error("chunks out of order");
     syms_[sym].bufs.push_back(std::move(ready_.front().raw));
     ready_.pop_front();
-    space_.notify_one();
+    ++popped_;
+    space_.notify_all();
     ++syms_[sym].chunk;
 }
 
 void MergedReader::wait_read_ahead() {
     if (ahead_ < order_.size()) throw std::logic_error("read-ahead smaller than the chunk count");
     std::unique_lock lock(mu_);
-    data_.wait(lock, [this] { return taken_ + ready_.size() == order_.size() || error_; });
+    data_.wait(lock, [this] { return done_ == order_.size() || error_; });
     if (error_) std::rethrow_exception(error_);
 }
 
@@ -265,7 +272,8 @@ bool MergedReader::fill() {
                 continue;
             }
             Record rec{};
-            if (!parse_record(s.bufs.front(), s.pos, rec)) throw std::runtime_error("corrupt record");
+            if (!parse_record(s.bufs.front(), s.pos, rec))
+                throw std::runtime_error("corrupt record");
             if (rec.seq >= end) {
                 key = rec.seq;
                 break;

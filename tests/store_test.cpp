@@ -138,7 +138,8 @@ TEST(Store, MergedReaderRestoresFeedOrder) {
     EXPECT_FALSE(none.next(rec, loc));
 }
 
-// Random gaps, some wider than a merge window, and chunks of one to five records.
+// Random gaps, some wider than a merge window, and chunks of one to five records. Several
+// read-ahead threads finish chunks out of order; the merge must not see that.
 TEST(Store, MergedReaderMatchesSortedUnionAcrossWindows) {
     TempDir dir("merged-gaps");
     std::mt19937_64 rng(7);
@@ -149,13 +150,16 @@ TEST(Store, MergedReaderMatchesSortedUnionAcrossWindows) {
         for (int k = 0; k < 20000; ++k) {
             seq += rng() % 8 == 0 ? 1 + rng() % (3 * MergedReader::kWindow) : 1 + rng() % 3;
             const auto loc = static_cast<std::uint16_t>(1 + rng() % 6);
-            const std::uint8_t m[2] = {static_cast<std::uint8_t>(seq), static_cast<std::uint8_t>(loc)};
+            const std::uint8_t m[2] = {static_cast<std::uint8_t>(seq),
+                                       static_cast<std::uint8_t>(loc)};
             w.append(loc, seq, seq, m, 2);
             if (loc != 6) want.emplace_back(seq, loc);
         }
     }
-    for (std::size_t ahead : {1, 16}) {
-        MergedReader r(dir.path, {1, 2, 3, 4, 5}, ahead);
+    using P = std::pair<std::size_t, unsigned>;
+    for (auto [ahead, threads] : {P{1, 1}, P{16, 1}, P{2, 4}, P{16, 4}, P{SIZE_MAX, 3}}) {
+        MergedReader r(dir.path, {1, 2, 3, 4, 5}, ahead, threads);
+        if (ahead == SIZE_MAX) r.wait_read_ahead();
         Record rec{};
         std::uint16_t loc = 0;
         std::size_t n = 0;

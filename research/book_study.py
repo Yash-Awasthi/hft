@@ -61,14 +61,14 @@ def main():
             rows += list(csv.DictReader(f))
 
     for mode in ("decode", "decode-only", "decompress", "replay"):
-        r = [x for x in rows if x["mode"] == mode]
-        if not r:
-            continue
-        n = int(r[0]["events"])
-        rate = [n / float(x["total_ns"]) * 1e3 for x in r]
-        secs = [float(x["total_ns"]) / 1e9 for x in r]
-        print(f"{mode}: {n} messages, {len(r)} reps, "
-              f"{fmt(*boot_median(rate))} M msg/s, {fmt(*boot_median(secs), 3)} s")
+        m = [x for x in rows if x["mode"] == mode]
+        for v in dict.fromkeys(x["variant"] for x in m):
+            r = [x for x in m if x["variant"] == v]
+            n = int(r[0]["events"])
+            rate = [n / float(x["total_ns"]) * 1e3 for x in r]
+            secs = [float(x["total_ns"]) / 1e9 for x in r]
+            print(f"{mode} {v}: {n} messages, {len(r)} reps, "
+                  f"{fmt(*boot_median(rate))} M msg/s, {fmt(*boot_median(secs), 3)} s")
 
     book = [x for x in rows if x["mode"] == "book"]
     variants = list(dict.fromkeys(x["variant"] for x in book))

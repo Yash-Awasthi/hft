@@ -98,15 +98,16 @@ class SymbolReader {
     std::size_t pos_ = 0;
 };
 
-// Merges the records of several symbols back into feed order. A read-ahead thread
-// decompresses chunks in global first-sequence order, which is exactly the order the merge
-// takes them in, so the hand-off is a bounded FIFO of at most `ahead` chunks. Records are
+// Merges the records of several symbols back into feed order. Read-ahead threads
+// decompress chunks in global first-sequence order, which is exactly the order the merge
+// takes them in, so the hand-off is a bounded FIFO of at most `ahead` chunks; with several
+// threads a chunk can finish early but is handed over only in that order. Records are
 // merged a window of kWindow sequence numbers at a time: each symbol scatters its records
 // into one slot per sequence number, then the window is emitted by scanning a bitmap.
 class MergedReader {
    public:
     MergedReader(const std::filesystem::path& dir, std::vector<std::uint16_t> locates,
-                 std::size_t ahead = 16);
+                 std::size_t ahead = 16, unsigned threads = 1);
     ~MergedReader();
     MergedReader(const MergedReader&) = delete;
     MergedReader& operator=(const MergedReader&) = delete;
@@ -141,6 +142,7 @@ class MergedReader {
     struct Ready {
         std::uint32_t sym;
         std::vector<std::uint8_t> raw;
+        bool done = false;
     };
     struct Slot {
         const std::uint8_t* data;
@@ -168,11 +170,14 @@ class MergedReader {
 
     std::mutex mu_;
     std::condition_variable data_, space_;
-    std::deque<Ready> ready_;
+    std::deque<Ready> ready_;  // chunks popped_, popped_ + 1, ... claimed by a thread
+    std::size_t popped_ = 0;
+    std::size_t claimed_ = 0;
+    std::size_t done_ = 0;
     std::vector<std::vector<std::uint8_t>> spare_;
     std::exception_ptr error_;
     bool stop_ = false;
-    std::thread thread_;
+    std::vector<std::thread> threads_;
 };
 
 }  // namespace hft::data
