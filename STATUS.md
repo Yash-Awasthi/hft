@@ -25,9 +25,11 @@ task finishes or blocks.
 - MS6: integer micro-dollar accounting with the PnL identity checked every event;
   event-driven backtest; zero, random, foresight, naive, Avellaneda-Stoikov (GLFT), DP and
   DP-with-signal strategies, strategy 5 extensions with ablation switches; numerical HJB
-  check; report on the validation day (`docs/results/ms6-backtest.md`). Not built: deep queue
-  reservation, portfolio inventory, online recalibration of A and k. Fee and fill-rule
-  sensitivity sweep finishing; the report gains that section when it ends.
+  check; online recalibration of A and k for AS (`as_online`); report on the validation day
+  with fee and fill-rule sensitivity (`docs/results/ms6-backtest.md`). Not built: deep queue
+  reservation, portfolio inventory. Fixed: sweeps stored the fee PnL over the fee schedule
+  label (both named `fees`); old sweeps were relabelled by recomputing fee PnL from fills
+  (`research/repair_fee_labels.py`; 155 of 155 val-main jobs with fills reproduce exactly).
 
 ### MS2 tasks
 
@@ -65,10 +67,8 @@ task finishes or blocks.
 
 ## In progress
 
-- Written with tests but not yet built (no rebuild while the sensitivity sweep runs):
-  online A/k recalibration for the AS strategy (`src/backtest/intensity.hpp`, `as_online`
-  sweep strategy) and the forecast-only transformer step. Patch kept at
-  `~/data/pending/online-ak-and-forecast-only.patch`; build, ctest, sweep, then commit.
+- Branch `ms6-finish` (worktree `.claude/worktrees/ms6-finish`) holds the MS6 finish and the
+  later fixes; it fast-forwards main (`git merge --ff-only ms6-finish`). Not pushed (item 7).
 - MS7 to MS10: first versions done with reports (`docs/results/ms7-regime.md`,
   `ms8-impact.md`, `ms9-transformer.md`, `ms10-validity.md`); misses listed under Results
   and in each report's "Not built".
@@ -153,6 +153,8 @@ task finishes or blocks.
 | MS6 | Ablation vs ext, small-tick | - | no toxicity +$234, no taking +$287, both removed (dp_signal) +$318 | same |
 | MS6 | Latency 0 to 500 us, ext | - | large-tick -$0.99 to -$16.46; small-tick -$4,176 to -$3,947 | same |
 | MS6 | AS small-tick | quotes | 0 orders: fitted k 0.027/tick gives 21.0-tick distance, collar 20 ticks rejects all (miss) | same |
+| MS6 | AS with online A/k (`as_online`), large-tick | - | -$53.05 [-96.76, -13.98] vs AS -$54.28; 430 vs 217 fills; -0.30 vs -0.61 c/share; small-tick still 0 orders (no fills, no refit) | `~/data/runs/val-as-online` |
+| MS6 | Fee schedule, naive large-tick, queue rule | - | cap30 -$553 [-1,139, -167], cap10 -$929 [-1,283, -613] | `docs/results/ms6-backtest.md` |
 | MS6 | AS closed forms vs numerical HJB | match | max 1.8e-12 ticks at 23,400 s | `research/hjb.py` |
 | MS7 | QR parameter recovery (simulate, ingest, recalibrate) | within errors | rates within 5 SE, z mean/sd in band, theta within 4 SE; half tick too | `research/tests/test_qr.py` |
 | MS7 | Method A, leave-stocks-out R2 (spread / depth / turnover) | - | 0.939 / 0.878 / 0.869 (3,801 stocks) | `docs/results/ms7-regime.md` |
@@ -164,9 +166,9 @@ task finishes or blocks.
 | MS8 | Parametric kernel G0 (1 + l/l0)^-beta, no-arbitrage check | positive definite | passes 50 of 50; median fit error 4.0% / 2.8% of mean abs R (large / small); 26 of 50 fits at a parameter bound | same |
 | MS8 | Mechanical vs reactive split | done | not built (simulator failed validation) | same |
 | MS9 | Kernel vs PyTorch, 200k INTC events | match | max error 6.7e-6, forecast decisions 100% equal | `docs/results/ms9-transformer.md` |
-| MS9 | Step latency, AVX2 float32 (provisional) | < 2 us | 2.2 to 2.5 us median (miss) | `hft_bench --benchmark_filter=EventStep` |
+| MS9 | Step latency, AVX2 float32, idle (provisional) | < 2 us | base 1,841 ns, small 1,537 ns, small forecast-only 1,459 ns | `hft_bench --benchmark_filter=EventStep` |
 | MS9 | Parameters / weights | ~10k / 40 KB | 21,354 / 83 KB (miss) | same report |
 | MS9 | Small model parameters / weights | ~10k / 40 KB | 10,618 / 41.5 KB; IC 0.403 vs 0.409 base | same report |
-| MS9 | Small model step, AVX2 (provisional, under load) | < 2 us | 2,131 ns vs base 2,125 ns back to back (miss; attention-loop bound) | same |
+| MS9 | Transposed-key attention scores, idle | - | small 1,867 to 1,537 ns, base 1,925 to 1,841 ns; under load both were about 2,130 ns | same |
 | MS10 | Relations passed (replay / QR / transformer, of 5) | - | 4 / 4 / 3; all fail the empirical exponent band | `docs/results/ms10-validity.md` |
 | MS11 | Test-set lock audit | passes | passes; test run not done (needs you, item 8) | `research/audit.py` |
