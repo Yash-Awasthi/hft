@@ -20,6 +20,7 @@ jobs:
       - run: |
           echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
           sudo git -C "$VCPKG_INSTALLATION_ROOT" fetch origin master
+          sudo git -C "$VCPKG_INSTALLATION_ROOT" checkout -q "$(jq -r '.["builtin-baseline"]' vcpkg.json)"
       - run: sudo sysctl vm.mmap_rnd_bits=28
       - run: cmake --preset ${{ matrix.preset }}
       - run: cmake --build build/${{ matrix.preset }}
@@ -34,6 +35,7 @@ jobs:
       - run: |
           echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
           sudo git -C "$VCPKG_INSTALLATION_ROOT" fetch origin master
+          sudo git -C "$VCPKG_INSTALLATION_ROOT" checkout -q "$(jq -r '.["builtin-baseline"]' vcpkg.json)"
       - run: cmake --preset fuzz
       - run: cmake --build build/fuzz --target itch_fuzz
       - run: |
