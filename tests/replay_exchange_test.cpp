@@ -183,3 +183,16 @@ TEST(ReplayExchange, MirroredExecutionsFillUnderTheConservativeRuleToo) {
     feed(x, m.exec(5, 30), l);
     EXPECT_EQ(l.filled(x.mirrored(5)), 30u);
 }
+
+// Marks and features use the real book only: our virtual orders must not move the BBO.
+TEST(ReplayExchange, RealBboIgnoresVirtualOrders) {
+    ReplayExchange<> x({}, FillRule::Queue);
+    Log l;
+    Itch m;
+    feed(x, m.add(1, 'B', 100, 10'0000), l);
+    feed(x, m.add(2, 'S', 100, 10'0300), l);
+    x.submit({1, kB, 10'0100, 50}, l);                     // improves the bid alone
+    x.submit({1, hft::book::Side::Sell, 10'0300, 50}, l);  // joins the ask
+    EXPECT_EQ(x.book().bbo(), (hft::book::Bbo{10'0100, 10'0300, 50, 150}));
+    EXPECT_EQ(x.real_bbo(), (hft::book::Bbo{10'0000, 10'0300, 100, 100}));
+}

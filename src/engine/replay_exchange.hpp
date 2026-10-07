@@ -41,6 +41,24 @@ class ReplayExchange {
     }
 
     const Book& book() const { return book_; }
+
+    // Best prices and sizes of real orders only. Levels holding only virtual orders are
+    // skipped; few virtual orders are live, so the walk is short.
+    book::Bbo real_bbo() const {
+        book::Bbo b;
+        for (const Side s : {Side::Buy, Side::Sell}) {
+            for (auto f = book_.front(s); f; f = book_.next_level(s, f->price)) {
+                std::uint64_t q = book_.level_qty(s, f->price);
+                for (const Virt& v : virt_)
+                    if (v.side == s && v.price == f->price) q -= book_.order(v.ref)->qty;
+                if (!q) continue;
+                (s == Side::Buy ? b.bid_px : b.ask_px) = f->price;
+                (s == Side::Buy ? b.bid_qty : b.ask_qty) = q;
+                break;
+            }
+        }
+        return b;
+    }
     const Divergence& divergence() const { return div_; }
 
     // Applies one ITCH message of this symbol; virtual fills go to `sink`.

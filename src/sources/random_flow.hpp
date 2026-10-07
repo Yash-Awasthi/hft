@@ -2,7 +2,7 @@
 
 // Synthetic, spec-valid ITCH 5.0 order flow for a few symbols: adds around a drifting mid,
 // partial and full executions, cancels, deletes and replaces, only ever against live
-// orders. Driven by Philox, so a seed gives the same bytes on every compiler. Used for test
+// orders; bids stay below the mid and asks above it. Driven by Philox, so a seed gives the same bytes on every compiler. Used for test
 // fixtures; the queue-reactive AgentSource replaces it for research.
 
 #include <cstdint>
@@ -50,7 +50,21 @@ class RandomFlow {
         ts_ += 1 + u(1, 2'000'000);
         const auto s = static_cast<std::uint16_t>(u(2, syms_));
         Sym& y = state_[s];
-        if (u(3, 50) == 0) y.mid = y.mid + 100 * (u(4, 2) ? 1u : 0u) - 100 * (u(5, 2) ? 1u : 0u);
+        if (u(3, 50) == 0) {
+            y.mid = y.mid + 100 * (u(4, 2) ? 1u : 0u) - 100 * (u(5, 2) ? 1u : 0u);
+            // A move executes the resting orders it crosses, so the book never stays crossed.
+            for (std::size_t k = 0; k < y.live.size();) {
+                const Live& l = y.live[k];
+                if (l.sell ? l.px > y.mid : l.px < y.mid) {
+                    ++k;
+                    continue;
+                }
+                msg(out, 'E', s).u64(l.ref).u32(l.qty).u64(next_match_++);
+                y.live[k] = y.live.back();
+                y.live.pop_back();
+            }
+            return;
+        }
         const std::uint32_t kind = y.live.size() < 5 ? 0 : u(6, 10);
         if (kind < 4) {  // add, one to ten ticks from the mid, occasionally far
             const bool sell = u(7, 2);
