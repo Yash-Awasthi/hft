@@ -65,6 +65,10 @@ task finishes or blocks.
 
 ## In progress
 
+- Written with tests but not yet built (no rebuild while the sensitivity sweep runs):
+  online A/k recalibration for the AS strategy (`src/backtest/intensity.hpp`, `as_online`
+  sweep strategy) and the forecast-only transformer step. Patch kept at
+  `~/data/pending/online-ak-and-forecast-only.patch`; build, ctest, sweep, then commit.
 - MS7 to MS10: first versions done with reports (`docs/results/ms7-regime.md`,
   `ms8-impact.md`, `ms9-transformer.md`, `ms10-validity.md`); misses listed under Results
   and in each report's "Not built".
@@ -162,5 +166,7 @@ task finishes or blocks.
 | MS9 | Kernel vs PyTorch, 200k INTC events | match | max error 6.7e-6, forecast decisions 100% equal | `docs/results/ms9-transformer.md` |
 | MS9 | Step latency, AVX2 float32 (provisional) | < 2 us | 2.2 to 2.5 us median (miss) | `hft_bench --benchmark_filter=EventStep` |
 | MS9 | Parameters / weights | ~10k / 40 KB | 21,354 / 83 KB (miss) | same report |
+| MS9 | Small model parameters / weights | ~10k / 40 KB | 10,618 / 41.5 KB; IC 0.403 vs 0.409 base | same report |
+| MS9 | Small model step, AVX2 (provisional, under load) | < 2 us | 2,131 ns vs base 2,125 ns back to back (miss; attention-loop bound) | same |
 | MS10 | Relations passed (replay / QR / transformer, of 5) | - | 4 / 4 / 3; all fail the empirical exponent band | `docs/results/ms10-validity.md` |
 | MS11 | Test-set lock audit | passes | passes; test run not done (needs you, item 8) | `research/audit.py` |

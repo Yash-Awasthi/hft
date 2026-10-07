@@ -50,6 +50,13 @@ def test_export_reads_back():
     assert np.array_equal(flat, want.astype(np.float32))
 
 
+def test_small_model_has_about_10k_parameters_and_a_kernel_layout():
+    m = tr.EventTransformer(**tr.SMALL)
+    n = sum(p.numel() for p in m.parameters())
+    assert 9_000 <= n <= 11_000, n
+    assert m.d % 8 == 0 and m.hidden % 8 == 0 and (m.d // m.heads) % 8 == 0  # AVX2 kernel layout
+
+
 if __name__ == "__main__":
     for name, f in list(globals().items()):
         if name.startswith("test_"):

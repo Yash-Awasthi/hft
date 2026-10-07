@@ -34,6 +34,8 @@ HORIZONS = (10, 100)
 FLAT = 0.25  # ticks: |mid change| below this is flat
 CHUNK = 1024
 MAGIC = 0x45564E54  # "EVNT"
+BASE = {"d": 32, "layers": 2, "heads": 2, "hidden": 64}
+SMALL = {"d": 24, "layers": 2, "heads": 3, "hidden": 24}
 
 
 class RMSNorm(nn.Module):
@@ -259,6 +261,7 @@ def main():
     ap.add_argument("--val", required=True)
     ap.add_argument("--symbols", type=int, default=10)
     ap.add_argument("--steps", type=int, default=3000)
+    ap.add_argument("--size", choices=["base", "small"], default="base")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
     sys.path.insert(0, a.py_build)
@@ -273,7 +276,7 @@ def main():
     print(f"tokens: train {sum(len(s['type']) for s in train):,}, val {sum(len(s['type']) for s in val):,}, "
           f"{time.time() - t0:.0f}s", flush=True)
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    m = EventTransformer().to(device)
+    m = EventTransformer(**(SMALL if a.size == "small" else BASE)).to(device)
     opt = torch.optim.AdamW(m.parameters(), lr=3e-3, weight_decay=0.01)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=3e-3, total_steps=a.steps)
     items = chunks(train, rng)

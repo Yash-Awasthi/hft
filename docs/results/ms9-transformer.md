@@ -35,6 +35,26 @@ Golden test in CI (`EventTransformer.MatchesPyTorchAndAgreesOnDecisions`): rando
 
 `hft_bench --benchmark_filter=EventStep` with `HFT_TRANSFORMER` pointing at the trained weights; window full. Measured while a DP solve ran on other cores.
 
+## Small model
+
+`python research/transformer.py ... --size small`: d_model 24, 2 layers, 3 heads (head size 8), MLP 24, window 64; 10,618 parameters (41.5 KB in float32), same data and 3,000 steps.
+
+| Model | Params | Forecast CE | IC, 10 events | Direction accuracy, 10 events | Generator CE |
+|---|---|---|---|---|---|
+| Base | 21,354 | 0.884 | 0.409 | 75.5% | 2.568 |
+| Small | 10,618 | 0.888 | 0.403 | 74.7% | 2.584 |
+
+Kernel against PyTorch, 200,000 INTC validation events: max abs logit error 1.6e-5 (scalar) and 1.8e-5 (AVX2); same arg-max at 10 events 100% / 99.9995%, at 100 events 100% on both paths, same next-event class 100%.
+
+Step latency, both models measured back to back while a 4-worker backtest sweep ran (provisional):
+
+| Model | Scalar median ns | AVX2 median ns | Target |
+|---|---|---|---|
+| Base | - | 2,125 | < 2,000 (miss) |
+| Small | 6,255 | 2,131 | < 2,000 (miss) |
+
+Halving the parameters leaves the AVX2 step time unchanged, which suggests the matrix-vector work is not the bottleneck. The attention loop runs layers x heads x window short dot products, each ending in a horizontal reduction: 384 for the small model and 256 for the base. Computing a head's scores 8 window slots at a time is the next change to try; it has not been profiled. A forecast-only step that skips the generator head (100 x d_model) is written with a test but not yet built or measured.
+
 ## Not built
 
 - int8 and AVX-VNNI paths, ONNX Runtime and LibTorch baselines (Stretch).
