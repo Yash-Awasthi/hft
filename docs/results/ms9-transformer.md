@@ -44,16 +44,16 @@ Golden test in CI (`EventTransformer.MatchesPyTorchAndAgreesOnDecisions`): rando
 | Base | 21,354 | 0.884 | 0.409 | 75.5% | 2.568 |
 | Small | 10,618 | 0.888 | 0.403 | 74.7% | 2.584 |
 
-Kernel against PyTorch, 200,000 INTC validation events: max abs logit error 1.6e-5 (scalar) and 1.8e-5 (AVX2); same arg-max at 10 events 100% / 99.9995%, at 100 events 100% on both paths, same next-event class 100%.
+Kernel against PyTorch, 200,000 INTC validation events, with attention scores from the transposed keys: max abs logit error 1.6e-5 on both paths; same arg-max at 10 and 100 events and same next-event class on 100% of events for both paths. The base model: 7.2e-6 (AVX2), forecast decisions 100%, next-event class 99.9995%.
 
-Step latency, both models measured back to back while a 4-worker backtest sweep ran (provisional):
+Step latency on an idle machine, 10 repetitions, window full (provisional until the wall-clock baseline, STATUS item 1). The AVX2 path computes each head's scores 8 window positions per FMA from keys stored transposed, instead of one horizontal reduction per position; "before" is the previous kernel built from the parent commit and run back to back:
 
-| Model | Scalar median ns | AVX2 median ns | Target |
-|---|---|---|---|
-| Base | - | 2,125 | < 2,000 (miss) |
-| Small | 6,255 | 2,131 | < 2,000 (miss) |
+| Model | Scalar median ns | AVX2 before | AVX2 median ns | AVX2 forecast only | Target |
+|---|---|---|---|---|---|
+| Base | 7,699 | 1,925 | 1,841 | 1,725 | < 2,000 |
+| Small | 5,191 | 1,867 | 1,537 | 1,459 | < 2,000 |
 
-Halving the parameters leaves the AVX2 step time unchanged, which suggests the matrix-vector work is not the bottleneck. The attention loop runs layers x heads x window short dot products, each ending in a horizontal reduction: 384 for the small model and 256 for the base. Computing a head's scores 8 window slots at a time is the next change to try; it has not been profiled. A forecast-only step that skips the generator head (100 x d_model) is written with a test but not yet built or measured.
+Standard deviations across repetitions are 6 to 18 ns. The earlier figures of about 2,130 ns for both models were taken while a backtest sweep ran on 4 to 6 cores; on an idle machine both kernels meet the target, and the transposed scores take 4% (base) and 18% (small) off the step.
 
 ## Not built
 
