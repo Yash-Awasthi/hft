@@ -2,7 +2,7 @@
 // end-to-end replay, over the busiest symbols of a store. Prints one CSV row per repetition;
 // research/book_study.py turns them into the comparison table.
 // Usage: book_study <store-dir> <mode> [top-n] [reps] [read-threads]
-//   mode: decode | decode-only | decompress | book | replay
+//   mode: decode | decode-only | decompress | book | book:<variant> | replay
 //         | book-cg:<variant> (one untimed pass, for Cachegrind)
 
 #include <hdr/hdr_histogram.h>
@@ -314,22 +314,27 @@ void book_mode(const std::filesystem::path& dir, const std::vector<std::uint16_t
         }
         return;
     }
+    // "book" times every variant, "book:<variant>" one.
+    auto want = [&](std::string_view v) { return only == "book" || only.substr(5) == v; };
     const double tpn = tsc::ticks_per_ns();
     const std::uint64_t ovh = tsc::overhead();
     std::fprintf(stderr, "events %zu, %.4f ticks/ns, timer overhead %llu ticks, invariant tsc %d\n",
                  ev.size(), tpn, (unsigned long long)ovh, tsc::invariant());
-    book_variant<book::MapBook>("map", ev, cap, reps, tpn, ovh);
-    book_variant<Tick>("tick", ev, cap, reps, tpn, ovh);
-    book_variant<Prefetched<Tick>>("tick-prefetch", ev, cap, reps, tpn, ovh);
-    book_variant<TickRh>("tick-rh", ev, cap, reps, tpn, ovh);
-    book_variant<TickDm>("tick-dm", ev, cap, reps, tpn, ovh);
-    book_variant<TickAos>("tick-aos", ev, cap, reps, tpn, ovh);
-    book_variant<TickSoa>("tick-soa", ev, cap, reps, tpn, ovh);
-    book_variant<SortedVec>("tick-sv", ev, cap, reps, tpn, ovh);
-    book_variant<BTree>("btree", ev, cap, reps, tpn, ovh);
-    PoolStats::huge_pages = false;
-    book_variant<Tick>("tick-4k", ev, cap, reps, tpn, ovh);
-    PoolStats::huge_pages = true;
+    if (want("map")) book_variant<book::MapBook>("map", ev, cap, reps, tpn, ovh);
+    if (want("tick")) book_variant<Tick>("tick", ev, cap, reps, tpn, ovh);
+    if (want("tick-prefetch"))
+        book_variant<Prefetched<Tick>>("tick-prefetch", ev, cap, reps, tpn, ovh);
+    if (want("tick-rh")) book_variant<TickRh>("tick-rh", ev, cap, reps, tpn, ovh);
+    if (want("tick-dm")) book_variant<TickDm>("tick-dm", ev, cap, reps, tpn, ovh);
+    if (want("tick-aos")) book_variant<TickAos>("tick-aos", ev, cap, reps, tpn, ovh);
+    if (want("tick-soa")) book_variant<TickSoa>("tick-soa", ev, cap, reps, tpn, ovh);
+    if (want("tick-sv")) book_variant<SortedVec>("tick-sv", ev, cap, reps, tpn, ovh);
+    if (want("btree")) book_variant<BTree>("btree", ev, cap, reps, tpn, ovh);
+    if (want("tick-4k")) {
+        PoolStats::huge_pages = false;
+        book_variant<Tick>("tick-4k", ev, cap, reps, tpn, ovh);
+        PoolStats::huge_pages = true;
+    }
 }
 
 // End to end on one replay thread plus the read-ahead thread: read, decode, apply, BBO.
@@ -385,7 +390,7 @@ int main(int argc, char** argv) {
         decode_only(dir, locs, reps);
     else if (mode == "decompress")
         decompress(dir, locs, reps);
-    else if (mode == "book" || mode.starts_with("book-cg:"))
+    else if (mode == "book" || mode.starts_with("book:") || mode.starts_with("book-cg:"))
         book_mode(dir, locs, reps, mode);
     else if (mode == "replay")
         replay(dir, locs, reps, threads);
