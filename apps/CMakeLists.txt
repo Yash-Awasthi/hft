@@ -15,3 +15,6 @@ target_link_libraries(checkpoint PRIVATE hft_core hft_data)
 
 add_executable(itch_dump itch_dump.cpp)
 target_link_libraries(itch_dump PRIVATE hft_core)
+
+add_executable(gen_fixture gen_fixture.cpp)
+target_link_libraries(gen_fixture PRIVATE hft_core zstd::libzstd)
