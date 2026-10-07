@@ -18,3 +18,6 @@ target_link_libraries(itch_dump PRIVATE hft_core)
 
 add_executable(gen_fixture gen_fixture.cpp)
 target_link_libraries(gen_fixture PRIVATE hft_core zstd::libzstd)
+
+add_executable(day_stats day_stats.cpp)
+target_link_libraries(day_stats PRIVATE hft_core hft_data)
