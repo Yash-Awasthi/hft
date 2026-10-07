@@ -13,6 +13,13 @@ task finishes or blocks.
 - MS3: matching engine, scheduler, virtual orders in the real queue, snapshot and fork,
   run configs with schema, SQLite registry, split registry with test-day lock, Philox RNG,
   determinism fixture with golden hashes.
+- MS4: universe from train days, streaming features (O(1), batch == streaming bit for bit,
+  future-perturbation leakage test), separate labeler, Python module, IC/decay tables and
+  ridge / LightGBM / RLS combinations on the validation day (`docs/results/ms4-signals.md`).
+  Sector lead-lag and the ETF basis wait on item 6 below.
+- MS5: re-insertion check of queue tracking, competing-risks fill model calibrated on
+  held-out orders, markouts by mechanism, queue value, L2-only estimator error
+  (`docs/results/ms5-fills.md`).
 - Data: 2025-11-28 and 2025-12-08 to 2025-12-11 ingested (0 bad frames) with checkpoints
   verified (220, 180, 325 and 302 for the December days).
 
@@ -52,7 +59,7 @@ task finishes or blocks.
 
 ## In progress
 
-- MS4: feature engine, labeler, signals.
+- MS6: quoting and backtest.
 
 ## Needs you
 
@@ -75,6 +82,12 @@ task finishes or blocks.
    symbol meet ≤ 30 / ≤ 150 ns; with the fifty busiest symbols interleaved the working set
    (about 100 MB of ID maps and orders) leaves the caches and the figures are 43.5 / 299 ns.
    Reported as a miss.
+6. **Reference data D4, QQQ weights (STOP 4).** The Invesco holdings download returns an
+   empty file and weights as of December 2025 are not published as a file I can fetch.
+   Recommended default, in use until you say otherwise: weights implied by a non-negative
+   regression of QQQ mid returns on the Nasdaq-listed universe stocks' mid returns over the
+   train days. Fee schedules, half-penny eligibility and the Tokyo / Tick Size Pilot results
+   are needed from MS6 and MS7; I will try public sources first.
 
 ## Results
 
@@ -98,3 +111,9 @@ task finishes or blocks.
 | MS3 | Matching engine vs reference | identical events | RapidCheck, 100 sequences per run | `MatchingProp` |
 | MS3 | Determinism across compilers | golden hashes | equal on GCC 13, 15, Clang 18, 21 | `Fixture.*` |
 | MS3 | Philox AVX2 x8 vs scalar (provisional) | - | 1.02G vs 0.70G words/s | `hft_bench --benchmark_filter=Philox` |
+| MS4 | Leakage: features after future perturbation | bit-identical | identical (deleted, shuffled, replaced) | `Features.UnchangedWhenTheFutureIsPerturbed` |
+| MS4 | Batch vs streaming features | identical | bit-identical, 14,936 rows, CI | `research/tests/check_batch_streaming.py` |
+| MS4 | Best combined IC, validation, 10 ms | - | large-tick 0.407 ± 0.031, small-tick 0.208 ± 0.017 (LightGBM) | `docs/results/ms4-signals.md` |
+| MS5 | Re-inserted real orders reproduced exactly | exact | 96.7% queue rule, 99.6% conservative (40,158 executed orders) | `reinsert` |
+| MS5 | Fill model calibration on held-out orders | - | mean abs error 0.013 to 0.020 by decile, tau 10 ms to 10 s | `research/fills.py` |
+| MS5 | L2-only queue estimate error | - | 14,169 shares vs 73,750 exact mean (19%) | `reinsert` |
