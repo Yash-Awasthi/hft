@@ -17,7 +17,7 @@ namespace hft::book {
 class MapBook {
    public:
     bool add(std::uint64_t ref, Side side, std::uint32_t shares, std::uint32_t price,
-             std::uint64_t seq) {
+             std::uint64_t seq, std::uint32_t = 0) {
         if (shares == 0 || !valid_price(price) || ref >= kMaxRef || orders_.contains(ref))
             return false;
         Level& l = side == Side::Buy ? bids_[price] : asks_[price];

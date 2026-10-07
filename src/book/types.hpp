@@ -21,4 +21,14 @@ struct Bbo {
     bool operator==(const Bbo&) const = default;
 };
 
+// One resting order as the matching engine sees it. Owner 0 is the real market in replay.
+struct OrderView {
+    std::uint64_t ref;
+    std::uint64_t seq;
+    std::uint32_t price;
+    std::uint32_t qty;
+    std::uint32_t owner;
+    Side side;
+};
+
 }  // namespace hft::book

@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 
@@ -28,10 +29,13 @@ class TickBook {
    public:
     static constexpr std::uint32_t kLevels = Levels;
 
-    explicit TickBook(std::size_t expected_orders = 1024)
+    // tick: price grid in ITCH units (100 is $0.01, 50 is $0.005); 0 picks 100 or, for a first
+    // price under $1, 1.
+    explicit TickBook(std::size_t expected_orders = 1024, std::uint32_t tick = 0)
         : o_(expected_orders),
           ids_(expected_orders),
-          over_{Pool<OverLevel>(64), Pool<OverLevel>(64)} {
+          over_{Pool<OverLevel>(64), Pool<OverLevel>(64)},
+          fixed_tick_(tick) {
         clear();
     }
 
@@ -40,7 +44,8 @@ class TickBook {
         used_ = 0;
         free_ = kNoOrder;
         live_ = 0;
-        tick_ = 0;
+        tick_ = fixed_tick_;
+        centred_ = false;
         base_ = 0;
         base_g_ = 0;
         recentres_ = 0;
@@ -54,10 +59,10 @@ class TickBook {
     }
 
     bool add(std::uint64_t ref, Side side, std::uint32_t shares, std::uint32_t price,
-             std::uint64_t seq) {
+             std::uint64_t seq, std::uint32_t owner = 0) {
         if (shares == 0 || !valid_price(price) || ref >= kMaxRef || ids_.find(ref) != kNoOrder)
             return false;
-        place(ref, static_cast<int>(side), shares, price, seq);
+        place(ref, static_cast<int>(side), shares, price, seq, owner);
         return true;
     }
 
@@ -78,8 +83,9 @@ class TickBook {
         if (new_ref >= kMaxRef || (new_ref != old_ref && ids_.find(new_ref) != kNoOrder))
             return false;
         const int s = side_of(o_.px(i));
+        const std::uint32_t owner = o_.owner(i);
         remove(i, old_ref);
-        place(new_ref, s, shares, price, seq);
+        place(new_ref, s, shares, price, seq, owner);
         return true;
     }
 
@@ -98,6 +104,24 @@ class TickBook {
     }
 
     std::size_t order_count() const { return live_; }
+
+    // First order in time priority at the best level of a side.
+    std::optional<OrderView> front(Side side) const {
+        const auto [px, l] = best(static_cast<int>(side));
+        if (!l) return std::nullopt;
+        return view(l->head);
+    }
+    // The order queued directly behind `ref` at its level.
+    std::optional<OrderView> behind(std::uint64_t ref) const {
+        const std::uint32_t i = ids_.find(ref);
+        if (i == kNoOrder || o_.next(i) == kNoOrder) return std::nullopt;
+        return view(o_.next(i));
+    }
+    std::optional<OrderView> order(std::uint64_t ref) const {
+        const std::uint32_t i = ids_.find(ref);
+        if (i == kNoOrder) return std::nullopt;
+        return view(i);
+    }
 
     std::uint32_t shares(std::uint64_t ref) const {
         const std::uint32_t i = ids_.find(ref);
@@ -185,6 +209,7 @@ class TickBook {
         free_ = o.free_;
         live_ = o.live_;
         tick_ = o.tick_;
+        centred_ = o.centred_;
         base_ = o.base_;
         base_g_ = o.base_g_;
         recentres_ = o.recentres_;
@@ -209,7 +234,8 @@ class TickBook {
                        static_cast<std::uint64_t>(live_),
                        tick_,
                        base_,
-                       recentres_,
+                       static_cast<std::uint32_t>(recentres_),
+                       centred_,
                        {n_over_[0], n_over_[1]},
                        {summary_[0], summary_[1]}};
         detail::put(out, &h, sizeof h);
@@ -245,6 +271,7 @@ class TickBook {
         free_ = h.free;
         live_ = h.live;
         tick_ = h.tick;
+        centred_ = h.centred != 0;
         base_ = h.base;
         base_g_ = tick_ ? base_ / tick_ : 0;
         recentres_ = h.recentres;
@@ -252,13 +279,13 @@ class TickBook {
     }
 
    private:
-    static constexpr std::uint64_t kMagic = 0x324b4f4f424b4354;  // "TCKBOOK2"
+    static constexpr std::uint64_t kMagic = 0x334b4f4f424b4354;  // "TCKBOOK3"
     struct Header {
         std::uint64_t magic;
         std::uint32_t used, free;
         std::uint64_t live;
         std::uint32_t tick, base;
-        std::uint64_t recentres;
+        std::uint32_t recentres, centred;
         std::uint32_t n_over[2];
         std::uint64_t summary[2];
     };
@@ -278,6 +305,12 @@ class TickBook {
     };
 
     static bool valid_price(std::uint32_t px) { return px != 0 && px < kSell; }
+    OrderView view(std::uint32_t i) const {
+        const std::uint32_t px = o_.px(i);
+        return {o_.ref(i), o_.seq(i),   price_of(px),
+                o_.qty(i), o_.owner(i), static_cast<Side>(side_of(px))};
+    }
+
     // Stored prices carry the side in the top bit.
     static int side_of(std::uint32_t px) { return px >> 31; }
     static std::uint32_t price_of(std::uint32_t px) { return px & ~kSell; }
@@ -287,7 +320,7 @@ class TickBook {
     // Tick index of a price for the radix, or kNoOrder when off the grid or out of its range.
     std::uint32_t grid(std::uint32_t px) const {
         if (kLevels == 0 || tick_ == 0) return kNoOrder;  // the sorted-vector book has no radix
-        const std::uint32_t g = tick_ == 1 ? px : px / 100;
+        const std::uint32_t g = tick_ == 1 ? px : tick_ == 100 ? px / 100 : px / tick_;
         return g * tick_ == px && g < LevelRadix<Level>::kRange ? g : kNoOrder;
     }
 
@@ -387,8 +420,9 @@ class TickBook {
     }
 
     Level& level_for_add(int s, std::uint32_t px) {
-        if (tick_ == 0) {
-            tick_ = px >= 1'0000 ? 100 : 1;
+        if (!centred_) {
+            if (tick_ == 0) tick_ = px >= 1'0000 ? 100 : 1;
+            centred_ = true;
             recentre(s, px);
         }
         const std::uint32_t g = grid(px);
@@ -462,7 +496,7 @@ class TickBook {
     }
 
     void place(std::uint64_t ref, int s, std::uint32_t shares, std::uint32_t price,
-               std::uint64_t seq) {
+               std::uint64_t seq, std::uint32_t owner) {
         std::uint32_t i;
         if (free_ != kNoOrder) {
             i = free_;
@@ -473,7 +507,7 @@ class TickBook {
             o_.reserve(used_);
         }
         Level& l = level_for_add(s, price);
-        o_.set(i, price | (s ? kSell : 0), shares, kNoOrder, l.tail, ref, seq);
+        o_.set(i, price | (s ? kSell : 0), shares, kNoOrder, l.tail, ref, seq, owner);
         if (l.tail != kNoOrder)
             o_.next(l.tail) = i;
         else
@@ -523,6 +557,8 @@ class TickBook {
     std::uint32_t n_over_[2];
     std::uint32_t used_, free_;
     std::size_t live_;
+    std::uint32_t fixed_tick_;
+    bool centred_;
     std::uint32_t tick_, base_, base_g_;
     std::uint64_t recentres_;
     std::uint64_t summary_[2];
