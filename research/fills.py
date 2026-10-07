@@ -75,22 +75,26 @@ def fit_cause(X, df, cause):
     return m
 
 
-def predicted_cif(models, X, taus):
-    """CIF of a fill by each tau from the two cause-specific Cox models."""
-    grid = np.unique(np.concatenate([m.baseline_cumulative_hazard_.index.values for m in models]))
-    grid = grid[grid <= max(taus)]
-    H = []
+def predicted_cif(models, X, taus, chunk=20_000):
+    """CIF of a fill by each tau from the two cause-specific Cox models, on a log time grid."""
+    grid = np.concatenate([[0.0], np.geomspace(1e-6, max(taus), 400)])
+    h0s = []
     for m in models:
         base = m.baseline_cumulative_hazard_.iloc[:, 0]
-        h0 = np.interp(grid, base.index.values, base.values, left=0.0)
-        risk = np.exp(m.predict_log_partial_hazard(X.to_pandas()).to_numpy())
-        H.append(np.outer(risk, h0))  # n x grid
-    H_fill, H_away = H
-    S = np.exp(-(H_fill + H_away))
-    S_prev = np.concatenate([np.ones((len(S), 1)), S[:, :-1]], axis=1)
-    dH = np.diff(np.concatenate([np.zeros((len(S), 1)), H_fill], axis=1), axis=1)
-    cif = np.cumsum(S_prev * dH, axis=1)
-    return np.stack([cif[:, np.searchsorted(grid, t, side="right") - 1] for t in taus], axis=1)
+        h0s.append(np.interp(grid, base.index.values, base.values, left=0.0))
+    risks = [np.exp(m.predict_log_partial_hazard(X.to_pandas()).to_numpy()) for m in models]
+    cols = [np.searchsorted(grid, t, side="right") - 1 for t in taus]
+    out = np.empty((len(X), len(taus)))
+    for lo in range(0, len(X), chunk):
+        hi = min(lo + chunk, len(X))
+        H_fill = np.outer(risks[0][lo:hi], h0s[0])
+        H_away = np.outer(risks[1][lo:hi], h0s[1])
+        S = np.exp(-(H_fill + H_away))
+        # Left-point rule on the grid: S just before each step times the fill hazard step.
+        cif = np.cumsum(S[:, :-1] * np.diff(H_fill, axis=1), axis=1)
+        cif = np.concatenate([np.zeros((hi - lo, 1)), cif], axis=1)
+        out[lo:hi] = cif[:, cols]
+    return out
 
 
 def observed_cif(df, tau):
@@ -128,6 +132,10 @@ def main():
 
     fit = train.sample(min(MAX_FIT_ROWS, train.height), seed=1)
     Xfit = design(fit)
+    # Winsorize at train quantiles so a few extreme covariates cannot blow up the hazards.
+    lims = {c: (float(Xfit[c].quantile(0.005)), float(Xfit[c].quantile(0.995))) for c in Xfit.columns}
+    clip = lambda X: X.with_columns([pl.col(c).clip(*lims[c]) for c in X.columns])
+    Xfit = clip(Xfit)
     m_fill, m_away = fit_cause(Xfit, fit, 1), fit_cause(Xfit, fit, 2)
     lines += ["### Cause-specific Cox models (train days)", "",
               "| Covariate | Fill log-HR | Away log-HR |", "|---|---|---|"]
@@ -136,7 +144,7 @@ def main():
                      f"| {m_away.params_[c]:+.3f} ± {1.96 * m_away.standard_errors_[c]:.3f} |")
     lines.append("")
 
-    cif = predicted_cif([m_fill, m_away], design(val), CIF_TAUS)
+    cif = predicted_cif([m_fill, m_away], clip(design(val)), CIF_TAUS)
     lines += ["### Calibration on validation-day real orders", "",
               "Predicted fill probability by tau (cumulative incidence) against the Aalen-Johansen "
               "estimate, by decile of the prediction.", "",
