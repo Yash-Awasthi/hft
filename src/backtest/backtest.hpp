@@ -21,6 +21,7 @@
 
 #include "backtest/accounting.hpp"
 #include "backtest/risk.hpp"
+#include "core/endian.hpp"
 #include "data/store.hpp"
 #include "engine/replay_exchange.hpp"
 #include "engine/scheduler.hpp"
@@ -53,7 +54,11 @@ struct Working {
     std::uint32_t price;
     std::uint32_t open;
     bool cancel_sent = false;
-    bool ioc = false;  // a take: counts against the position limit until its report returns
+    bool ioc = false;       // a take: counts against the position limit until its report returns
+    std::uint64_t key = 0;  // largest reference the strategy had seen when it sent the order
+    // From the strategy's own feed: shares of real orders ranking ahead (references below
+    // key, the exchange assigns them on receipt) and all shares at the order's price.
+    double ahead = 0, level = 0;
 };
 
 // Everything the strategy may look at when it decides: no exchange-side state.
@@ -223,9 +228,13 @@ class Backtest {
         const Md& m = md_[id - md_done_];
         const std::size_t slot = m.slot;
         const bool changed = mf_->on_itch(slot, m.msg, m.len, m.seq);
-        md_.pop_front();
+        if (slot == 0 && (m.msg[0] == 'A' || m.msg[0] == 'F'))
+            max_ref_ = std::max(max_ref_, load_be64(m.msg + 11));
+        if (slot == 0 && m.msg[0] == 'U') max_ref_ = std::max(max_ref_, load_be64(m.msg + 19));
+        md_.pop_front();  // m is gone from here on
         ++md_done_;
         if (!changed || slot != 0) return;
+        queue_positions(mf_->book(0));
         mf_->row(0, mf_->last_event().ts, row_.data());
         const bool quoting = now >= c_.start_ns && now < c_.stop_ns && !risk_.killed();
         const View v{now,        mf_->book(0), row_.data(), row_.size(), mf_->symbol(0).mid(),
@@ -291,9 +300,21 @@ class Backtest {
             return;
         }
         const std::uint64_t tag = ++next_tag_;
-        working_.push_back({0, tag, side, px, qty, false, tif == engine::Tif::Ioc});
+        working_.push_back({0, tag, side, px, qty, false, tif == engine::Tif::Ioc, max_ref_});
         send({false, tag, 0, {1, side, px, qty, tif, post_only}});
         ++sum_.orders;
+    }
+
+    void queue_positions(const book::TickBook<>& b) {
+        for (Working& w : working_) {
+            if (w.ioc) continue;
+            w.level = static_cast<double>(b.level_qty(w.side, w.price));
+            w.ahead = 0;
+            auto f = b.front(w.side);
+            while (f && f->price != w.price) f = b.next_level(w.side, f->price);
+            for (; f; f = b.behind(f->ref))
+                if (f->ref < w.key) w.ahead += f->qty;
+        }
     }
 
     void send(Outgoing o) {
@@ -372,6 +393,7 @@ class Backtest {
     std::int64_t inventory_ = 0;  // as the strategy knows it from reports
     std::uint64_t next_tag_ = 0, now_ = 0;
     std::uint32_t hysteresis_ = 0;
+    std::uint64_t max_ref_ = 0;
     book::Bbo last_{};
     Summary sum_;
 };

@@ -58,3 +58,4 @@ jobs:
       - run: cmake --build build/release --target hftpy ingest feature_stream
       - run: python research/tests/check_batch_streaming.py build/release build/release
       - run: python research/tests/test_estimators.py
+      - run: python research/tests/test_dp.py

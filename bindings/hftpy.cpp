@@ -18,6 +18,7 @@
 #include "book/tick_book.hpp"
 #include "data/store.hpp"
 #include "feed/itch.hpp"
+#include "strategy/grid.hpp"
 #include "strategy/labeler.hpp"
 #include "strategy/lifecycles.hpp"
 #include "strategy/multi_features.hpp"
@@ -231,6 +232,48 @@ nb::dict lifecycles(const std::string& store, std::uint16_t locate, std::uint64_
     return d;
 }
 
+// Regular grid of one symbol-day for the quoting MDP: per step the best quotes, the shares
+// executed and cancelled at each starting best, whether it moved, the end mid and features.
+nb::dict grid(const std::string& store, std::uint16_t target, std::vector<std::uint16_t> index,
+              std::uint64_t step_ns, std::uint64_t start_ns, std::uint64_t end_ns) {
+    strategy::GridSampler g(step_ns, start_ns, end_ns);
+    {
+        nb::gil_scoped_release release;
+        g.run(store, target, std::move(index));
+    }
+    const auto& S = g.steps();
+    const std::size_t n = S.size();
+    std::vector<std::uint64_t> ts(n);
+    std::vector<std::uint32_t> bid(n), ask(n);
+    std::vector<double> q(n * 2), ex(n * 2), ca(n * 2), mid_end(n);
+    std::vector<std::int8_t> moved(n * 2);
+    for (std::size_t i = 0; i < n; ++i) {
+        ts[i] = S[i].ts;
+        bid[i] = S[i].bid_px;
+        ask[i] = S[i].ask_px;
+        q[2 * i] = S[i].bid_qty;
+        q[2 * i + 1] = S[i].ask_qty;
+        for (int k = 0; k < 2; ++k) {
+            ex[2 * i + k] = S[i].exec[k];
+            ca[2 * i + k] = S[i].cancel[k];
+            moved[2 * i + k] = S[i].moved[k];
+        }
+        mid_end[i] = S[i].mid_end;
+    }
+    std::vector<double> rows = g.rows();
+    nb::dict d;
+    d["ts"] = array(std::move(ts), n);
+    d["bid_px"] = array(std::move(bid), n);
+    d["ask_px"] = array(std::move(ask), n);
+    d["qty"] = array(std::move(q), n, 2);
+    d["exec"] = array(std::move(ex), n, 2);
+    d["cancel"] = array(std::move(ca), n, 2);
+    d["moved"] = array(std::move(moved), n, 2);
+    d["mid_end"] = array(std::move(mid_end), n);
+    d["X"] = array(std::move(rows), n, g.features());
+    return d;
+}
+
 double param(const std::map<std::string, double>& p, const char* k, double def) {
     const auto it = p.find(k);
     return it == p.end() ? def : it->second;
@@ -321,6 +364,11 @@ nb::dict backtest_run(const std::string& store, std::uint16_t target,
             s.end_ns = c.end_ns;
             s.tick = c.exchange.tick;
             r = run_one(c, s, store, target, index, hysteresis);
+        } else if (name.starts_with("dp:")) {
+            backtest::DpPolicy s;
+            s.load(name.substr(3));
+            s.tick = c.exchange.tick;
+            r = run_one(c, s, store, target, index, hysteresis);
         } else {
             throw std::invalid_argument("unknown strategy " + name);
         }
@@ -363,6 +411,8 @@ NB_MODULE(hftpy, m) {
           nb::arg("clock_h_ns"), nb::arg("tick") = 100);
     m.def("lifecycles", &lifecycles, nb::arg("store"), nb::arg("locate"), nb::arg("sample_one_in"),
           nb::arg("horizon_s"), nb::arg("taus_s"));
+    m.def("grid", &grid, nb::arg("store"), nb::arg("target"), nb::arg("index"), nb::arg("step_ns"),
+          nb::arg("start_ns"), nb::arg("end_ns"));
     m.def("backtest", &backtest_run, nb::arg("store"), nb::arg("target"), nb::arg("index"),
           nb::arg("strategy"), nb::arg("params"), nb::arg("config"));
     m.attr("lifecycle_covariates") =

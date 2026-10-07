@@ -145,3 +145,98 @@ struct AvellanedaStoikov {
 };
 
 }  // namespace hft::backtest
+
+#include <fstream>
+#include <stdexcept>
+#include <string>
+
+namespace hft::backtest {
+
+// Serves a quoting policy solved offline by research/run_dp.py: one table lookup per decision
+// (DESIGN.md section 3). State: inventory in lots, queue bucket of our bid and ask (from the
+// shares ahead of our orders in the strategy's own feed), imbalance, spread and signal buckets.
+struct DpPolicy {
+    std::int32_t Q = 0, n_queue = 0, n_imb = 0, n_spread = 0, n_sig = 0, k = 0;
+    std::vector<double> imb_edges, spread_edges, sig_edges, means, stds, weights;
+    std::vector<std::uint8_t> table;
+    std::uint32_t lot = 100, tick = 100;
+
+    void load(const std::string& path) {
+        std::ifstream f(path, std::ios::binary);
+        char magic[8];
+        f.read(magic, 8);
+        if (!f || std::string(magic, 8) != "HFTDP001")
+            throw std::runtime_error("not a policy table: " + path);
+        std::int32_t h[6];
+        f.read(reinterpret_cast<char*>(h), sizeof h);
+        Q = h[0], n_queue = h[1], n_imb = h[2], n_spread = h[3], n_sig = h[4], k = h[5];
+        auto doubles = [&](std::vector<double>& v, std::size_t n) {
+            v.resize(n);
+            f.read(reinterpret_cast<char*>(v.data()), static_cast<std::streamsize>(n * 8));
+        };
+        doubles(imb_edges, n_imb - 1);
+        doubles(spread_edges, n_spread - 1);
+        doubles(sig_edges, n_sig - 1);
+        doubles(means, k);
+        doubles(stds, k);
+        doubles(weights, k);
+        table.resize(static_cast<std::size_t>(2 * Q + 1) * n_queue * n_imb * n_spread * n_sig);
+        f.read(reinterpret_cast<char*>(table.data()), static_cast<std::streamsize>(table.size()));
+        if (!f) throw std::runtime_error("truncated policy table: " + path);
+    }
+
+    static int bucket(const std::vector<double>& edges, double x) {
+        int b = 0;
+        while (b < static_cast<int>(edges.size()) && x > edges[b]) ++b;
+        return b;
+    }
+
+    // Matches research/dp.py: front at one lot or a third of the level ahead, then thirds.
+    static int queue(const Working* w) {
+        if (!w) return 0;
+        const double rho = w->level > 0 ? w->ahead / w->level : 0;
+        if (rho <= 1.0 / 3 || w->ahead <= 100) return 1;
+        return rho <= 2.0 / 3 ? 2 : 3;
+    }
+
+    void decide(const View& v, Desired& d) {
+        const book::Bbo b = v.book.bbo();
+        if (!b.bid_px || !b.ask_px || b.ask_px <= b.bid_px ||
+            v.n_features < static_cast<std::size_t>(k))
+            return;
+        const double spread = static_cast<double>(b.ask_px - b.bid_px) / tick;
+        double sig = 0;
+        for (std::int32_t i = 0; i < k; ++i) {
+            const double x = std::isfinite(v.features[i]) ? v.features[i] : 0;
+            sig += weights[i] * std::clamp((x - means[i]) / stds[i], -5.0, 5.0);
+        }
+        const double imb = std::isfinite(v.features[1]) ? v.features[1] : 0;
+        const int x = (bucket(imb_edges, imb) * n_spread + bucket(spread_edges, spread)) * n_sig +
+                      bucket(sig_edges, sig);
+        const Working *wb = nullptr, *wa = nullptr;
+        for (const Working& w : v.working) {
+            if (w.ioc || w.cancel_sent) continue;
+            if (w.side == book::Side::Buy && w.price == b.bid_px) wb = &w;
+            if (w.side == book::Side::Sell && w.price == b.ask_px) wa = &w;
+        }
+        const int q = static_cast<int>(
+            std::clamp<std::int64_t>(v.inventory / static_cast<std::int64_t>(lot), -Q, Q));
+        const int s = (queue(wb) * 4 + queue(wa)) * n_imb * n_spread * n_sig + x;
+        const int a =
+            table[static_cast<std::size_t>(q + Q) * n_queue * n_imb * n_spread * n_sig + s];
+        if (a == 9) {
+            d.take_side = 1, d.take_qty = lot, d.take_limit = b.ask_px;
+            return;
+        }
+        if (a == 10) {
+            d.take_side = -1, d.take_qty = lot, d.take_limit = b.bid_px;
+            return;
+        }
+        const int ab = a / 3, aa = a % 3;
+        const bool room = b.ask_px - b.bid_px >= 2 * tick;
+        if (ab) d.bid_px = ab == 2 && room ? b.bid_px + tick : b.bid_px, d.bid_qty = lot;
+        if (aa) d.ask_px = aa == 2 && room ? b.ask_px - tick : b.ask_px, d.ask_qty = lot;
+    }
+};
+
+}  // namespace hft::backtest
