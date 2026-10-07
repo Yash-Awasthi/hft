@@ -4,37 +4,13 @@
 
 #include <vector>
 
+#include "itch_writer.hpp"
+
 using namespace hft::engine;
 
 namespace {
 
-// Encodes ITCH messages for one symbol (locate 1).
-struct Itch {
-    std::vector<std::uint8_t> b;
-    Itch& head(char t) {
-        b.clear();
-        b.push_back(static_cast<std::uint8_t>(t));
-        return n(1, 2).n(0, 2).n(34'200'000'000'000, 6);
-    }
-    Itch& n(std::uint64_t v, int bytes) {
-        for (int s = (bytes - 1) * 8; s >= 0; s -= 8)
-            b.push_back(static_cast<std::uint8_t>(v >> s));
-        return *this;
-    }
-    Itch& c(char v) { return n(static_cast<std::uint8_t>(v), 1); }
-    Itch& stock() { return n(0x5445535420202020ull, 8); }  // "TEST    "
-
-    Itch& add(std::uint64_t ref, char side, std::uint32_t qty, std::uint32_t px) {
-        return head('A').n(ref, 8).c(side).n(qty, 4).stock().n(px, 4);
-    }
-    Itch& exec(std::uint64_t ref, std::uint32_t qty) {
-        return head('E').n(ref, 8).n(qty, 4).n(9, 8);
-    }
-    Itch& del(std::uint64_t ref) { return head('D').n(ref, 8); }
-    Itch& hidden(char side, std::uint32_t qty, std::uint32_t px) {
-        return head('P').n(0, 8).c(side).n(qty, 4).stock().n(px, 4).n(9, 8);
-    }
-};
+using Itch = ItchWriter;
 
 struct Log {
     std::vector<Event> ev;
@@ -135,4 +111,21 @@ TEST(ReplayExchange, PostOnlyAndCancel) {
     EXPECT_FALSE(x.cancel(v, 2, l));
     EXPECT_TRUE(x.cancel(v, 1, l));
     EXPECT_FALSE(x.book().order(v).has_value());
+}
+
+// ITCH sets the side of every P message to 'B', so a hidden print fills virtual orders on
+// whichever side it reaches: bids at or above the print, asks at or below it.
+TEST(ReplayExchange, HiddenPrintsIgnoreTheSideField) {
+    ReplayExchange<> x({}, FillRule::Queue);
+    Log l;
+    Itch m;
+    const auto bid = x.submit({1, kB, 10'0000, 40}, l);
+    const auto ask = x.submit({1, hft::book::Side::Sell, 10'0100, 40}, l);
+    feed(x, m.hidden('B', 10, 10'0100), l);  // at our ask
+    EXPECT_EQ(l.filled(ask), 10u);
+    EXPECT_EQ(l.filled(bid), 0u);
+    feed(x, m.hidden('B', 10, 10'0050), l);  // midpoint: reaches neither
+    EXPECT_EQ(l.filled(ask) + l.filled(bid), 10u);
+    feed(x, m.hidden('B', 5, 9'9900), l);  // below our bid
+    EXPECT_EQ(l.filled(bid), 5u);
 }

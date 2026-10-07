@@ -124,10 +124,13 @@ class ReplayExchange {
             x.forget_if_gone(m.orig_ref);
             x.book_.add(m.new_ref, v->side, m.shares, m.price, ++x.arrival_);
         }
-        // The side is that of the hidden resting order.
+        // ITCH sets the side of every P message to 'B', so a hidden print is matched against
+        // both sides: it reaches bids at or above its price and asks at or below it. A
+        // displayed order outranks the hidden one at the same price.
         void operator()(const itch::Trade& m) {
-            x.virtual_fills(m.side == 'B' ? Side::Buy : Side::Sell, m.price, ~0ull, m.shares, true,
-                            sink);
+            const std::uint32_t got =
+                x.virtual_fills(Side::Buy, m.price, ~0ull, m.shares, true, sink);
+            x.virtual_fills(Side::Sell, m.price, ~0ull, m.shares - got, true, sink);
         }
         template <class T>
         void operator()(const T&) {}

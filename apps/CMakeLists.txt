@@ -21,3 +21,6 @@ target_link_libraries(gen_fixture PRIVATE hft_core zstd::libzstd)
 
 add_executable(day_stats day_stats.cpp)
 target_link_libraries(day_stats PRIVATE hft_core hft_data)
+
+add_executable(feature_stream feature_stream.cpp)
+target_link_libraries(feature_stream PRIVATE hft_core hft_data)

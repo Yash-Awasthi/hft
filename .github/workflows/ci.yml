@@ -41,3 +41,19 @@ jobs:
       - run: |
           mkdir -p "$RUNNER_TEMP/corpus"
           build/fuzz/fuzz/itch_fuzz -max_total_time=30 "$RUNNER_TEMP/corpus"
+
+  python:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
+          sudo git -C "$VCPKG_INSTALLATION_ROOT" fetch origin master
+          sudo git -C "$VCPKG_INSTALLATION_ROOT" checkout -qf "$(jq -r '.["builtin-baseline"]' vcpkg.json)"
+      - run: pip install nanobind numpy
+      - run: cmake --preset release -DHFT_PYTHON=ON -DPython_EXECUTABLE="$(which python)"
+      - run: cmake --build build/release --target hftpy ingest feature_stream
+      - run: python research/tests/check_batch_streaming.py build/release build/release
