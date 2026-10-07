@@ -27,10 +27,11 @@ POLICIES = DATA / "policies"
 
 def strategy_spec(name, group):
     meta = POLICIES / f"dp_{group}_nosignal.bin.json"
-    as_A, as_k = 1.0, 1.5
+    as_A, as_k, vol = 1.0, 1.5, 1.0
     if meta.exists():
         m = json.loads(meta.read_text())
-        as_A, as_k = m["as_A"], m["as_k"]
+        as_A, as_k, vol = m["as_A"], m["as_k"], m.get("vol_p95", 1.0)
+    ext = f"ext:{POLICIES / f'dp_{group}_signal.bin'}"
     specs = {
         "zero": ("zero", {}),
         "naive": ("naive", {"size": 100, "max_inventory": 500}),
@@ -41,6 +42,9 @@ def strategy_spec(name, group):
                                       "size": 100, "max_inventory": 500, "hysteresis_ticks": 1}),
         "dp": (f"dp:{POLICIES / f'dp_{group}_nosignal.bin'}", {}),
         "dp_signal": (f"dp:{POLICIES / f'dp_{group}_signal.bin'}", {}),
+        "ext": (ext, {"vol_limit": vol, "toxicity": 1, "taking": 1}),
+        "ext_no_toxicity": (ext, {"vol_limit": vol, "toxicity": 0, "taking": 1}),
+        "ext_no_taking": (ext, {"vol_limit": vol, "toxicity": 1, "taking": 0}),
     }
     return specs[name]
 

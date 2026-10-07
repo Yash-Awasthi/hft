@@ -123,6 +123,8 @@ def main():
         gs = grids(hftpy, stores, universe[group]["symbols"])
         sig, r2 = fit_signal(gs)
         A, k = fit_intensity(gs)
+        vol = np.concatenate([g["X"][:, 19] for g in gs])
+        vol_p95 = float(np.nanquantile(vol, 0.95))
         sigs = signal_of(gs, sig)
         for name, use_signal in (("nosignal", False), ("signal", True)):
             # Without the signal every state falls in the middle bucket, here and in C++.
@@ -134,7 +136,8 @@ def main():
                     "signal_r2_train": r2, "policy_iterations": int(iters), "Q": Q, "phi": PHI,
                     "discount": DISCOUNT, "rebate_ticks": REBATE_TICKS, "fee_ticks": FEE_TICKS,
                     "step_ns": STEP_NS, "action_share": np.bincount(pi.ravel(), minlength=dp.N_ACTIONS).tolist(),
-                    "value_flat_mean": float(V[Q].mean()), "as_A": A, "as_k": k}
+                    "value_flat_mean": float(V[Q].mean()), "as_A": A, "as_k": k,
+                    "vol_p95": vol_p95}
             used = {**sig, "edges": edges}
             dp.export(out / f"dp_{group}_{name}.bin", pi, Q, used, meta)
             print(json.dumps(meta), f"{time.time() - t0:.0f}s", flush=True)

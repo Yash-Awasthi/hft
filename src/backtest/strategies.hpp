@@ -160,6 +160,7 @@ struct DpPolicy {
     std::vector<double> imb_edges, spread_edges, sig_edges, means, stds, weights;
     std::vector<std::uint8_t> table;
     std::uint32_t lot = 100, tick = 100;
+    double last_signal = 0;  // predicted mid change over the next second, ticks
 
     void load(const std::string& path) {
         std::ifstream f(path, std::ios::binary);
@@ -210,6 +211,7 @@ struct DpPolicy {
             const double x = std::isfinite(v.features[i]) ? v.features[i] : 0;
             sig += weights[i] * std::clamp((x - means[i]) / stds[i], -5.0, 5.0);
         }
+        last_signal = sig;
         const double imb = std::isfinite(v.features[1]) ? v.features[1] : 0;
         const int x = (bucket(imb_edges, imb) * n_spread + bucket(spread_edges, spread)) * n_sig +
                       bucket(sig_edges, sig);
@@ -236,6 +238,36 @@ struct DpPolicy {
         const bool room = b.ask_px - b.bid_px >= 2 * tick;
         if (ab) d.bid_px = ab == 2 && room ? b.bid_px + tick : b.bid_px, d.bid_qty = lot;
         if (aa) d.ask_px = aa == 2 && room ? b.ask_px - tick : b.ask_px, d.ask_qty = lot;
+    }
+};
+
+}  // namespace hft::backtest
+
+namespace hft::backtest {
+
+// Strategy 5: the DP policy with signals plus extensions of DESIGN.md section 3, each one
+// switchable for the ablation table. Toxicity guard: no resting quotes while realized
+// volatility (feature 19, ticks per event) is above its limit. Aggressive taking: cross when
+// the signal exceeds half the spread plus the taker fee and a margin.
+struct Extended {
+    DpPolicy dp;
+    bool toxicity = true, taking = true;
+    double vol_limit = 1.0, fee_ticks = 0.3, take_margin = 0.1;
+    std::int64_t max_inventory = 500;
+
+    void decide(const View& v, Desired& d) {
+        dp.decide(v, d);
+        if (toxicity && v.n_features > 19 && std::isfinite(v.features[19]) &&
+            v.features[19] > vol_limit)
+            d.bid_qty = d.ask_qty = 0;
+        if (!taking || d.take_side) return;
+        const book::Bbo b = v.book.bbo();
+        if (!b.bid_px || !b.ask_px || b.ask_px <= b.bid_px) return;
+        const double need = (b.ask_px - b.bid_px) / (2.0 * dp.tick) + fee_ticks + take_margin;
+        if (dp.last_signal > need && v.inventory < max_inventory)
+            d.take_side = 1, d.take_qty = dp.lot, d.take_limit = b.ask_px;
+        else if (-dp.last_signal > need && v.inventory > -max_inventory)
+            d.take_side = -1, d.take_qty = dp.lot, d.take_limit = b.bid_px;
     }
 };
 

@@ -369,6 +369,16 @@ nb::dict backtest_run(const std::string& store, std::uint16_t target,
             s.load(name.substr(3));
             s.tick = c.exchange.tick;
             r = run_one(c, s, store, target, index, hysteresis);
+        } else if (name.starts_with("ext:")) {
+            backtest::Extended s;
+            s.dp.load(name.substr(4));
+            s.dp.tick = c.exchange.tick;
+            s.toxicity = param(params, "toxicity", 1) != 0;
+            s.taking = param(params, "taking", 1) != 0;
+            s.vol_limit = param(params, "vol_limit", 1.0);
+            s.fee_ticks = static_cast<double>(c.exchange.taker_fee) / (c.exchange.tick * 100.0);
+            s.take_margin = param(params, "take_margin", 0.1);
+            r = run_one(c, s, store, target, index, hysteresis);
         } else {
             throw std::invalid_argument("unknown strategy " + name);
         }

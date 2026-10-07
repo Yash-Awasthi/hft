@@ -166,14 +166,20 @@ TEST(Grid, StepsCoverTheWindowAndCountExecutionsAtTheBest) {
 }
 
 // Table layout of research/dp.py export: [q][bid queue][ask queue][imbalance][spread][signal].
-TEST(Strategies, DpPolicyLooksUpTheExportedLayout) {
-    TempDir dir("dp");
+namespace {
+
+// Writes a small policy table in the research/dp.py layout: [q][bid queue][ask queue]
+// [imbalance][spread][signal], signal weights w on two features.
+std::string write_table(const TempDir& dir, double w0, double w1) {
     const std::string path = (dir.path / "t.bin").string();
     // The header counts queue states as (bid, ask) pairs: 16.
     const std::int32_t Q = 1, nq = 4, ni = 5, ns = 3, ng = 3, k = 2;
-    std::vector<std::uint8_t> table(static_cast<std::size_t>(2 * Q + 1) * nq * nq * ni * ns * ng, 0);
+    std::vector<std::uint8_t> table(static_cast<std::size_t>(2 * Q + 1) * nq * nq * ni * ns * ng,
+                                    0);
     auto at = [&](int q, int pb, int pa, int i, int s, int g) -> std::uint8_t& {
-        return table[((((static_cast<std::size_t>(q + Q) * nq + pb) * nq + pa) * ni + i) * ns + s) * ng + g];
+        return table[((((static_cast<std::size_t>(q + Q) * nq + pb) * nq + pa) * ni + i) * ns + s) *
+                         ng +
+                     g];
     };
     at(0, 0, 0, 2, 0, 1) = 4;  // flat, no orders, balanced, one tick, flat signal: both at best
     at(1, 0, 0, 2, 0, 1) = 1;  // one lot long: bid out, ask at best (action = bid * 3 + ask)
@@ -183,16 +189,25 @@ TEST(Strategies, DpPolicyLooksUpTheExportedLayout) {
         f.write("HFTDP001", 8);
         const std::int32_t h[6] = {Q, nq * nq, ni, ns, ng, k};
         f.write(reinterpret_cast<const char*>(h), sizeof h);
-        const double imb[4] = {-0.6, -0.2, 0.2, 0.6}, spr[2] = {1.5, 3.5}, sig[2] = {-1e9, 1e9};
-        const double mu[2] = {0, 0}, sd[2] = {1, 1}, w[2] = {0, 0};
+        const double imb[4] = {-0.6, -0.2, 0.2, 0.6}, spr[2] = {1.5, 3.5}, sig[2] = {-0.5, 0.5};
+        const double mu[2] = {0, 0}, sd[2] = {1, 1}, w[2] = {w0, w1};
         for (const auto* a : {imb}) f.write(reinterpret_cast<const char*>(a), sizeof imb);
         f.write(reinterpret_cast<const char*>(spr), sizeof spr);
         f.write(reinterpret_cast<const char*>(sig), sizeof sig);
         f.write(reinterpret_cast<const char*>(mu), sizeof mu);
         f.write(reinterpret_cast<const char*>(sd), sizeof sd);
         f.write(reinterpret_cast<const char*>(w), sizeof w);
-        f.write(reinterpret_cast<const char*>(table.data()), static_cast<std::streamsize>(table.size()));
+        f.write(reinterpret_cast<const char*>(table.data()),
+                static_cast<std::streamsize>(table.size()));
     }
+    return path;
+}
+
+}  // namespace
+
+TEST(Strategies, DpPolicyLooksUpTheExportedLayout) {
+    TempDir dir("dp");
+    const std::string path = write_table(dir, 0, 0);
     DpPolicy p;
     p.load(path);
     book::TickBook<> b;
@@ -211,4 +226,32 @@ TEST(Strategies, DpPolicyLooksUpTheExportedLayout) {
     p.decide(View{1, b, f, 2, 1000.5, 0, w, true}, d2);
     EXPECT_EQ(d2.take_side, 1);
     EXPECT_EQ(d2.take_limit, 10'0100u);
+}
+
+TEST(Strategies, ExtendedGuardsAndTakes) {
+    TempDir dir("ext");
+    Extended e;
+    e.dp.load(write_table(dir, 0.0, 10.0));  // signal = 10 x imbalance, in ticks
+    e.vol_limit = 1.0;
+    book::TickBook<> b;
+    b.add(1, Side::Buy, 100, 10'0000, 1);
+    b.add(2, Side::Sell, 100, 10'0100, 2);
+    std::vector<Working> w;
+    double f[20] = {};
+    f[0] = 1;
+    Desired calm, toxic, strong;
+    e.decide(View{1, b, f, 20, 1000.5, 0, w, true}, calm);
+    EXPECT_EQ(calm.bid_qty, 100u);  // balanced book: both quotes, no take
+    EXPECT_EQ(calm.take_side, 0);
+    f[19] = 2.0;  // volatility above the limit
+    e.decide(View{1, b, f, 20, 1000.5, 0, w, true}, toxic);
+    EXPECT_EQ(toxic.bid_qty + toxic.ask_qty, 0u);
+    f[19] = 0;
+    f[1] = 0.1;  // signal 1 tick > half spread 0.5 + fee 0.3 + margin 0.1
+    e.decide(View{1, b, f, 20, 1000.5, 0, w, true}, strong);
+    EXPECT_EQ(strong.take_side, 1);
+    e.taking = false;
+    Desired off;
+    e.decide(View{1, b, f, 20, 1000.5, 0, w, true}, off);
+    EXPECT_EQ(off.take_side, 0);
 }
