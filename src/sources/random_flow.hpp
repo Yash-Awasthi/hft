@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "core/philox.hpp"
+#include "sources/itch_out.hpp"
 
 namespace hft::sources {
 
@@ -102,68 +103,22 @@ class RandomFlow {
         }
     }
 
-    struct Writer {
-        std::vector<std::uint8_t>& o;
-        std::size_t len_at;
-        Writer& u8(std::uint8_t v) {
-            o.push_back(v);
-            return *this;
-        }
-        Writer& be(std::uint64_t v, int bytes) {
-            for (int sh = (bytes - 1) * 8; sh >= 0; sh -= 8)
-                o.push_back(static_cast<std::uint8_t>(v >> sh));
-            return *this;
-        }
-        Writer& u16(std::uint16_t v) { return be(v, 2); }
-        Writer& u32(std::uint32_t v) { return be(v, 4); }
-        Writer& u64(std::uint64_t v) { return be(v, 8); }
-        Writer& text(const std::string& s, std::size_t n) {
-            for (std::size_t i = 0; i < n; ++i)
-                u8(i < s.size() ? static_cast<std::uint8_t>(s[i]) : ' ');
-            return *this;
-        }
-        ~Writer() {
-            const std::size_t n = o.size() - len_at - 2;
-            o[len_at] = static_cast<std::uint8_t>(n >> 8);
-            o[len_at + 1] = static_cast<std::uint8_t>(n);
-        }
-    };
-
-    Writer msg(std::vector<std::uint8_t>& out, char type, std::uint16_t locate) {
-        const std::size_t at = out.size();
-        out.push_back(0);
-        out.push_back(0);
-        Writer w{out, at};
-        w.u8(static_cast<std::uint8_t>(type)).u16(locate).u16(0).be(ts_, 6);
-        return w;
+    BinaryFileWriter::Msg msg(std::vector<std::uint8_t>& out, char type, std::uint16_t locate) {
+        return BinaryFileWriter::msg(out, type, locate, ts_);
     }
 
     static std::string name(std::uint16_t s) { return "SYM" + std::to_string(s); }
 
     void system(char event, std::vector<std::uint8_t>& out) {
-        msg(out, 'S', 0).u8(static_cast<std::uint8_t>(event));
+        BinaryFileWriter::system(out, event, ts_);
     }
 
     void directory(std::uint16_t s, std::vector<std::uint8_t>& out) {
-        msg(out, 'R', s)
-            .text(name(s), 8)
-            .u8('Q')
-            .u8('N')
-            .u32(100)
-            .u8('N')
-            .u8('C')
-            .text("Z", 2)
-            .u8('P')
-            .u8('N')
-            .u8('N')
-            .u8('1')
-            .u8('N')
-            .u32(0)
-            .u8('N');
+        BinaryFileWriter::directory(out, s, name(s), ts_);
     }
 
     void add(std::uint16_t s, const Live& l, bool attributed, std::vector<std::uint8_t>& out) {
-        Writer w = msg(out, attributed ? 'F' : 'A', s);
+        auto w = msg(out, attributed ? 'F' : 'A', s);
         w.u64(l.ref).u8(l.sell ? 'S' : 'B').u32(l.qty).text(name(s), 8).u32(l.px);
         if (attributed) w.text("ABCD", 4);
     }

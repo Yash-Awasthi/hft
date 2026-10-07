@@ -8,6 +8,7 @@
 #include <nanobind/stl/vector.h>
 
 #include <algorithm>
+#include <fstream>
 #include <cmath>
 #include <limits>
 #include <string>
@@ -22,6 +23,8 @@
 #include "strategy/labeler.hpp"
 #include "strategy/lifecycles.hpp"
 #include "strategy/multi_features.hpp"
+#include "strategy/qr_events.hpp"
+#include "sources/queue_reactive.hpp"
 
 namespace nb = nanobind;
 using namespace hft;
@@ -411,6 +414,56 @@ nb::dict backtest_run(const std::string& store, std::uint16_t target,
     return d;
 }
 
+// Queue-reactive calibration record of one symbol (strategy/qr_events.hpp).
+nb::dict qr_events(const std::string& store, std::uint16_t locate, int K, std::uint32_t tick,
+                   std::uint64_t start_ns, std::uint64_t end_ns) {
+    strategy::QrRecorder rec(K, tick, start_ns, end_ns);
+    {
+        nb::gil_scoped_release release;
+        rec.run(store, locate);
+    }
+    strategy::QrRecord r = rec.record();
+    const std::size_t n = r.ts.size(), m = r.moves_ts.size();
+    nb::dict d;
+    d["ts"] = array(std::move(r.ts), n);
+    d["kind"] = array(std::move(r.kind), n);
+    d["side"] = array(std::move(r.side), n);
+    d["level"] = array(std::move(r.level), n);
+    d["shares"] = array(std::move(r.shares), n);
+    d["after_move"] = array(std::move(r.after_move), n);
+    d["q"] = array(std::move(r.q), n, static_cast<std::size_t>(2 * K));
+    d["moves_ts"] = array(std::move(r.moves_ts), m);
+    d["moves_dir"] = array(std::move(r.moves_dir), m);
+    d["episodes_moved"] = r.episodes_moved;
+    d["episodes_refilled"] = r.episodes_refilled;
+    return d;
+}
+
+// Simulates one session of the queue-reactive model into a BinaryFILE stream at `path`.
+// Rate tables are K x (N + 1) arrays; returns the event and move counts.
+nb::dict qr_simulate(int K, int N, std::uint32_t aes, std::uint32_t p_ref, double theta,
+                     std::vector<double> L, std::vector<double> C, std::vector<double> M,
+                     std::vector<double> init, std::uint64_t start_ns, std::uint64_t end_ns,
+                     std::uint64_t seed, const std::string& path) {
+    sources::QrParams p;
+    p.K = K, p.N = N, p.aes = aes, p.p_ref = p_ref, p.theta = theta;
+    p.L = std::move(L), p.C = std::move(C), p.M = std::move(M), p.init = std::move(init);
+    p.start_ns = start_ns, p.end_ns = end_ns;
+    sources::QueueReactive sim(std::move(p), seed);
+    std::vector<std::uint8_t> raw;
+    {
+        nb::gil_scoped_release release;
+        sim.day(raw);
+    }
+    std::ofstream(path, std::ios::binary).write(reinterpret_cast<const char*>(raw.data()),
+                                                 static_cast<std::streamsize>(raw.size()));
+    nb::dict d;
+    d["events"] = sim.events();
+    d["moves"] = sim.moves();
+    d["bytes"] = raw.size();
+    return d;
+}
+
 }  // namespace
 
 NB_MODULE(hftpy, m) {
@@ -425,6 +478,11 @@ NB_MODULE(hftpy, m) {
           nb::arg("start_ns"), nb::arg("end_ns"));
     m.def("backtest", &backtest_run, nb::arg("store"), nb::arg("target"), nb::arg("index"),
           nb::arg("strategy"), nb::arg("params"), nb::arg("config"));
+    m.def("qr_events", &qr_events, nb::arg("store"), nb::arg("locate"), nb::arg("K"),
+          nb::arg("tick"), nb::arg("start_ns"), nb::arg("end_ns"));
+    m.def("qr_simulate", &qr_simulate, nb::arg("K"), nb::arg("N"), nb::arg("aes"), nb::arg("p_ref"),
+          nb::arg("theta"), nb::arg("L"), nb::arg("C"), nb::arg("M"), nb::arg("init"),
+          nb::arg("start_ns"), nb::arg("end_ns"), nb::arg("seed"), nb::arg("path"));
     m.attr("lifecycle_covariates") =
         nb::make_tuple("queue_ahead", "opposite_qty", "imbalance", "spread_ticks", "volatility",
                        "ofi_signal", "shares");
