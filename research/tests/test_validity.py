@@ -64,6 +64,14 @@ def test_replay_is_side_symmetric_on_a_symmetric_book():
     assert np.allclose((buy + sell_m)[:, :2], 0)
 
 
+def test_queue_reactive_subject_is_side_symmetric_at_a_wide_spread():
+    subj = v.QRSubject(v.toy_qr())
+    st = v.State(v.L2({1000: 300, 999: 500}, {1003: 200, 1004: 400}), None, None)
+    seeds = list(range(300))
+    buy, sell_m = v.effects(subj, [st], 20, seeds), v.effects(subj, [st], 20, seeds, mirror=True)
+    assert np.all(np.abs(buy + sell_m)[:, :2] < 0.15), (buy, sell_m)
+
+
 if __name__ == "__main__":
     for name, f in list(globals().items()):
         if name.startswith("test_"):

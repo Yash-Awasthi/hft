@@ -134,7 +134,8 @@ def toy_qr():
 
 
 class QRSubject:
-    """Model I on K levels per side around p_ref = best bid + 1/2, in AES units."""
+    """Model I on K levels per side around p_ref, in AES units: p_ref is the mid for odd spreads
+    (side-symmetric), else best bid + 1/2."""
     name = "queue_reactive"
 
     def __init__(self, fit):
@@ -146,7 +147,7 @@ class QRSubject:
         b = st.book
         m0 = b.mid()
         bb = b.best(0)
-        pref = bb + 0.5
+        pref = m0 if abs(m0 % 1 - 0.5) < 1e-9 else bb + 0.5
         lv = np.zeros((2, K), int)
         for i in range(K):
             lv[0, i] = round(b.bids.get(int(pref - 0.5 - i), 0) / f["aes"])
