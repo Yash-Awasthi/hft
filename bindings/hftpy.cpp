@@ -543,6 +543,46 @@ nb::dict transformer_run(const std::string& weights, U8 type, U8 side, U8 dist, 
     return d;
 }
 
+// L2 snapshots on the tick grid: at each query time (sorted), the best prices and the shares
+// at the L prices from each best outwards (empty prices included).
+nb::dict snapshots(const std::string& store, std::uint16_t locate, std::vector<std::uint64_t> at,
+                   int L, std::uint32_t tick) {
+    const std::size_t n = at.size();
+    std::vector<std::uint32_t> bid(n), ask(n);
+    std::vector<std::uint64_t> bq(n * static_cast<std::size_t>(L)), aq(n * static_cast<std::size_t>(L));
+    {
+        nb::gil_scoped_release release;
+        book::TickBook<> b;
+        book::ItchApply<book::TickBook<>> ap{b};
+        data::SymbolReader rd(store, locate);
+        data::Record rec{};
+        std::size_t k = 0;
+        auto take = [&] {
+            const book::Bbo q = b.bbo();
+            bid[k] = q.bid_px, ask[k] = q.ask_px;
+            for (int j = 0; j < L; ++j) {
+                const auto u = static_cast<std::uint32_t>(j) * tick;
+                const auto o = k * static_cast<std::size_t>(L) + static_cast<std::size_t>(j);
+                bq[o] = q.bid_px > u ? b.level_qty(book::Side::Buy, q.bid_px - u) : 0;
+                aq[o] = q.ask_px ? b.level_qty(book::Side::Sell, q.ask_px + u) : 0;
+            }
+            ++k;
+        };
+        while (k < n && rd.next(rec)) {
+            const std::uint64_t ts = itch::detail::read_header(rec.data).timestamp;
+            while (k < n && ts > at[k]) take();
+            itch::dispatch(rec.data, rec.len, ap);
+        }
+        while (k < n) take();
+    }
+    nb::dict d;
+    d["bid_px"] = array(std::move(bid), n);
+    d["ask_px"] = array(std::move(ask), n);
+    d["bid_qty"] = array(std::move(bq), n, static_cast<std::size_t>(L));
+    d["ask_qty"] = array(std::move(aq), n, static_cast<std::size_t>(L));
+    return d;
+}
+
 }  // namespace
 
 NB_MODULE(hftpy, m) {
@@ -559,6 +599,8 @@ NB_MODULE(hftpy, m) {
           nb::arg("strategy"), nb::arg("params"), nb::arg("config"));
     m.def("transformer_run", &transformer_run, nb::arg("weights"), nb::arg("type"), nb::arg("side"),
           nb::arg("dist"), nb::arg("size"), nb::arg("log_dt"), nb::arg("avx2") = true);
+    m.def("snapshots", &snapshots, nb::arg("store"), nb::arg("locate"), nb::arg("at"), nb::arg("L") = 10,
+          nb::arg("tick") = 100);
     m.def("tokens", &tokens, nb::arg("store"), nb::arg("locate"), nb::arg("start_ns"), nb::arg("end_ns"));
     m.def("trades", &trades, nb::arg("store"), nb::arg("locate"), nb::arg("start_ns"), nb::arg("end_ns"));
     m.def("qr_events", &qr_events, nb::arg("store"), nb::arg("locate"), nb::arg("K"),
