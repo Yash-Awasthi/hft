@@ -59,22 +59,20 @@ task finishes or blocks.
 
 ## In progress
 
-- MS6: quoting and backtest. Done: exact integer accounting with the PnL identity checked
-  every event; event-driven backtest (three latencies, real-order marks, risk checks,
-  hysteresis, in-flight takes in the position limit); zero, random, perfect-foresight, naive,
-  Avellaneda-Stoikov (GLFT) strategies; the DP quoting MDP (100 ms grid, counterfactual queue
-  replay, exact policy iteration cross-checked against value iteration and brute force) with
-  C++ table serving; strategy 5 extensions (toxicity guard, aggressive taking) with ablation
-  switches; day-clustered bootstrap, deflated Sharpe, CRPS; sweep orchestrator
-  (`research/backtests.py`) writing Parquet and a registry row.
-  Sanity on INTC, 2025-12-08: zero 0; random taking -0.61 c/share spread (about half the
-  spread) and -0.30 c/share fees; random passive +0.49 c/share spread; perfect foresight
-  +$13,061.
-  Running: `research/run_dp.py` solving the four policy tables from the train days
-  (output `~/data/policies`). Next: validation-day sweep of strategies 1 to 5, latency
-  sweep, fee and fill-rule sensitivity, ablations, report.
-  Not yet built: deep queue reservation, portfolio inventory, online recalibration, the
-  numerical HJB check of the Avellaneda-Stoikov closed form.
+- MS6: quoting and backtest. Built: exact integer accounting (micro-dollars) with the PnL
+  identity checked every event; event-driven backtest; zero, random, foresight, naive,
+  Avellaneda-Stoikov (GLFT), DP and DP-with-signal strategies, strategy 5 extensions with
+  ablation switches; DP policy tables for both groups (`research/run_dp.py`); sweep
+  orchestrator; report (`research/backtest_report.py`); numerical HJB check of the AS closed
+  forms (`research/hjb.py`). Sanity on the validation day: see Results. Validation sweeps
+  (main, latency, ablation, fee and fill-rule sensitivity) running; report next.
+  Not built: deep queue reservation, portfolio inventory, online recalibration of A and k
+  (sigma is already an online EWMA in the AS strategy).
+- MS7 to MS10: first versions done with reports (`docs/results/ms7-regime.md`,
+  `ms8-impact.md`, `ms9-transformer.md`, `ms10-validity.md`); misses listed under Results
+  and in each report's "Not built".
+- MS11: test-run script (`scripts/test_run.sh`) and lock audit (`research/audit.py`, passes)
+  ready; the run itself waits on item 8 below.
 
 ## Needs you
 
@@ -109,6 +107,15 @@ task finishes or blocks.
 7. **CI cost.** GitHub Actions minutes on the private repository are nearly used up. Making
    the repository public (free minutes) is pending your action; pushes are held until then.
 
+8. **Test-set run, MS11 (STOP: test-set unlock).** Needs your go-ahead to download and ingest the four
+   locked test days and run `scripts/test_run.sh <tag>` once at a frozen tag. Audit now:
+   no run touched a test day, no test-day store exists.
+9. **Pre-registration publication (STOP: publish).** Draft bundle in `docs/prereg/`, tagged locally
+   as `prereg-draft-1` (not pushed). Publishing it, and where, is yours to decide; the
+   forecast is not ready to freeze while method C fails its current-tick validation (MS7).
+10. **M3 checkpoints (STOP: licence).** Non-commercial licence; download and fine-tuning
+    for MS10 wait on your decision.
+
 ## Results
 
 | Milestone | Metric | Target | Measured | Evidence |
@@ -137,3 +144,16 @@ task finishes or blocks.
 | MS5 | Re-inserted real orders reproduced exactly | exact | 96.7% queue rule, 99.6% conservative (40,158 executed orders) | `reinsert` |
 | MS5 | Fill model calibration on held-out orders | - | mean abs error 0.013 to 0.020 by decile, tau 10 ms to 10 s | `research/fills.py` |
 | MS5 | L2-only queue estimate error | - | 14,169 shares vs 73,750 exact mean (19%) | `reinsert` |
+| MS7 | QR parameter recovery (simulate, ingest, recalibrate) | within errors | rates within 5 SE, z mean/sd in band, theta within 4 SE; half tick too | `research/tests/test_qr.py` |
+| MS7 | Method A, leave-stocks-out R2 (spread / depth / turnover) | - | 0.939 / 0.878 / 0.869 (3,801 stocks) | `docs/results/ms7-regime.md` |
+| MS7 | Method A vs Tick Size Pilot (x5 tick, TG1) | direction and size | spread +31% (published +17%), depth +293% (+275%) | same |
+| MS7 | Half-penny spread change, treated (A / B) | - | -9% / -49% (methods disagree) | same |
+| MS7 | Method C at the current tick, depth | validated | median log error 1.75 (x5.8); INTC 133 sim moves vs 7,241 real (miss) | same |
+| MS8 | Square-root exponent, sign-run metaorders | ~0.5 | median 0.45 both groups (IQR 0.43 to 0.49) | `docs/results/ms8-impact.md` |
+| MS8 | Propagator kernel no-arbitrage check | positive definite | fails in 50 of 50 stocks (unregularized G rises at long lags) | same |
+| MS8 | Mechanical vs reactive split | done | not built (simulator failed validation) | same |
+| MS9 | Kernel vs PyTorch, 200k INTC events | match | max error 6.7e-6, forecast decisions 100% equal | `docs/results/ms9-transformer.md` |
+| MS9 | Step latency, AVX2 float32 (provisional) | < 2 us | 2.2 to 2.5 us median (miss) | `hft_bench --benchmark_filter=EventStep` |
+| MS9 | Parameters / weights | ~10k / 40 KB | 21,354 / 83 KB (miss) | same report |
+| MS10 | Relations passed (replay / QR / transformer, of 5) | - | 4 / 4 / 3; all fail the empirical exponent band | `docs/results/ms10-validity.md` |
+| MS11 | Test-set lock audit | passes | passes; test run not done (needs you, item 8) | `research/audit.py` |
