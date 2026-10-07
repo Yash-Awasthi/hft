@@ -27,7 +27,7 @@ import stats  # noqa: E402
 
 DATA = pathlib.Path.home() / "data"
 UNIT = 1e-6  # accounting unit in dollars (micro-dollars, src/backtest/accounting.hpp)
-KEYS = ["strategy", "symbol", "day", "latency_us", "fees", "fill_rule"]
+KEYS = ["strategy", "symbol", "day", "latency_us", "fee_schedule", "fill_rule"]
 TERMS = ["spread", "adverse", "residual", "fees"]
 
 
@@ -91,7 +91,7 @@ def sharpe_table(s, minutes, by, n_trials):
     rows = []
     for key, g in s.group_by(list(by), maintain_order=True):
         k = dict(zip(by, key))
-        cfg = {c: k[c] for c in k if c in ("latency_us", "fees", "fill_rule")}
+        cfg = {c: k[c] for c in k if c in ("latency_us", "fee_schedule", "fill_rule")}
         r = bucket_returns(minutes, groups[k["group"]], k["strategy"], **cfg)
         rows.append({**k, "returns": r, "sharpe": stats.sharpe(r)})
     sr = np.array([r["sharpe"] for r in rows])
@@ -184,7 +184,7 @@ def sensitivity_section(s_sens):
     head = ["## Fee schedule and fill rule", ""]
     if s_sens is None:
         return head + ["Sensitivity sweep not included in this version of the report.", ""]
-    return head + [config_table(s_sens, ("group", "strategy", "fees", "fill_rule"),
+    return head + [config_table(s_sens, ("group", "strategy", "fee_schedule", "fill_rule"),
                                 ["Group", "Strategy", "Fees", "Fill rule"]), ""]
 
 

@@ -4,7 +4,7 @@ Validation day 2025-12-11 only; the test days stay locked. 50 universe stocks (2
 
 Attribution: total = spread capture + inventory PnL + fees, checked after every event in the backtest. Inventory PnL is split into adverse selection (mid move over the 1 s after each of our fills, times the fill) and the residual. Fees include rebates, access fees, Section 31 and FINRA TAF (`configs/fees.toml`).
 
-Sharpe: mean over standard deviation of the group's summed PnL per 5-minute bucket (about 78 buckets per day; not annualized). Deflated Sharpe (Bailey and Lopez de Prado): probability that the true Sharpe exceeds the expected maximum of 16 unskilled trials (distinct Q1 configurations in the registry), Sharpe variance across trials 0.0767.
+Sharpe: mean over standard deviation of the group's summed PnL per 5-minute bucket (about 78 buckets per day; not annualized). Deflated Sharpe (Bailey and Lopez de Prado): probability that the true Sharpe exceeds the expected maximum of 31 unskilled trials (distinct Q1 configurations in the registry), Sharpe variance across trials 0.0767.
 
 ## Strategies (latency 0, 30 mil cap, queue fill rule)
 
@@ -59,7 +59,48 @@ Market-data and order-entry latency both set to the value; processing 5 us.
 
 ## Fee schedule and fill rule
 
-Sensitivity sweep not included in this version of the report.
+| Group | Strategy | Fees | Fill rule | PnL $ [95% CI] | Spread $ | Adverse $ | Fees $ | Fills | PnL c/share |
+|---|---|---|---|---|---|---|---|---|---|
+| large_tick | as | cap10 | queue | -65.50 [-110.07, -23.29] | 109.87 | -168.10 | -6.77 | 217 | -0.740 |
+| large_tick | as | cap10 | trade_through | 14.82 [-20.89, 59.92] | 31.22 | -77.64 | -2.82 | 78 | 0.511 |
+| large_tick | as | cap30 | queue | -54.28 [-94.15, -15.22] | 109.87 | -168.10 | 4.45 | 217 | -0.614 |
+| large_tick | as | cap30 | trade_through | 18.22 [-17.78, 62.79] | 31.22 | -77.64 | 0.59 | 78 | 0.628 |
+| large_tick | dp | cap10 | queue | 0.00 [0.00, 0.00] | 0.00 | 0.00 | 0.00 | 0 | 0.000 |
+| large_tick | dp | cap10 | trade_through | 0.00 [0.00, 0.00] | 0.00 | 0.00 | 0.00 | 0 | 0.000 |
+| large_tick | dp | cap30 | queue | 0.00 [0.00, 0.00] | 0.00 | 0.00 | 0.00 | 0 | 0.000 |
+| large_tick | dp | cap30 | trade_through | 0.00 [0.00, 0.00] | 0.00 | 0.00 | 0.00 | 0 | 0.000 |
+| large_tick | dp_signal | cap10 | queue | 0.54 [-3.77, 5.97] | 0.77 | -0.88 | -0.12 | 2 | 0.814 |
+| large_tick | dp_signal | cap10 | trade_through | -0.41 [-1.24, 0.00] | -0.01 | -0.05 | -0.02 | 0 | -5.169 |
+| large_tick | dp_signal | cap30 | queue | 0.61 [-3.61, 5.98] | 0.77 | -0.88 | -0.06 | 2 | 0.906 |
+| large_tick | dp_signal | cap30 | trade_through | -0.41 [-1.22, 0.00] | -0.01 | -0.05 | -0.01 | 0 | -5.097 |
+| large_tick | ext | cap10 | queue | -1.04 [-8.05, 5.41] | 0.93 | -0.43 | -0.10 | 1 | -1.765 |
+| large_tick | ext | cap10 | trade_through | -0.41 [-1.24, 0.00] | -0.01 | -0.05 | -0.02 | 0 | -5.169 |
+| large_tick | ext | cap30 | queue | -0.99 [-7.87, 5.43] | 0.93 | -0.43 | -0.05 | 1 | -1.673 |
+| large_tick | ext | cap30 | trade_through | -0.41 [-1.22, 0.00] | -0.01 | -0.05 | -0.01 | 0 | -5.097 |
+| large_tick | naive | cap10 | queue | -928.60 [-1,282.60, -612.84] | 2,146.99 | -3,131.03 | -126.72 | 9,677 | -0.222 |
+| large_tick | naive | cap10 | trade_through | -147.55 [-427.99, 65.09] | -47.06 | -133.13 | -22.64 | 641 | -0.668 |
+| large_tick | naive | cap30 | queue | -552.64 [-1,138.87, -166.79] | 2,242.19 | -3,266.94 | 405.00 | 10,324 | -0.126 |
+| large_tick | naive | cap30 | trade_through | -119.66 [-369.07, 77.63] | -47.06 | -133.13 | 5.24 | 641 | -0.542 |
+| small_tick | as | cap10 | queue | 0.00 [0.00, 0.00] | 0.00 | 0.00 | 0.00 | 0 | 0.000 |
+| small_tick | as | cap10 | trade_through | 0.00 [0.00, 0.00] | 0.00 | 0.00 | 0.00 | 0 | 0.000 |
+| small_tick | as | cap30 | queue | 0.00 [0.00, 0.00] | 0.00 | 0.00 | 0.00 | 0 | 0.000 |
+| small_tick | as | cap30 | trade_through | 0.00 [0.00, 0.00] | 0.00 | 0.00 | 0.00 | 0 | 0.000 |
+| small_tick | dp | cap10 | queue | -3,978.83 [-4,533.72, -3,380.43] | 7,887.27 | -10,632.68 | -701.94 | 7,662 | -1.736 |
+| small_tick | dp | cap10 | trade_through | -4,279.93 [-4,864.18, -3,705.16] | 5,907.68 | -9,038.38 | -544.79 | 5,817 | -2.474 |
+| small_tick | dp | cap30 | queue | -4,007.75 [-4,604.67, -3,417.16] | 8,311.24 | -11,233.02 | -435.35 | 8,172 | -1.638 |
+| small_tick | dp | cap30 | trade_through | -4,210.09 [-4,826.29, -3,586.90] | 6,094.24 | -9,335.14 | -338.30 | 6,082 | -2.327 |
+| small_tick | dp_signal | cap10 | queue | -3,740.31 [-4,314.10, -3,153.44] | 7,548.69 | -10,161.93 | -721.63 | 7,864 | -1.631 |
+| small_tick | dp_signal | cap10 | trade_through | -4,175.59 [-4,796.74, -3,555.28] | 5,472.85 | -8,411.06 | -542.43 | 5,927 | -2.451 |
+| small_tick | dp_signal | cap30 | queue | -3,858.30 [-4,468.36, -3,184.38] | 7,870.93 | -10,627.09 | -466.02 | 8,371 | -1.584 |
+| small_tick | dp_signal | cap30 | trade_through | -3,714.46 [-4,249.97, -3,183.31] | 5,663.70 | -8,738.12 | -346.61 | 6,217 | -2.077 |
+| small_tick | ext | cap10 | queue | -3,840.33 [-4,427.37, -3,206.68] | 5,425.16 | -8,145.24 | -893.04 | 8,627 | -1.355 |
+| small_tick | ext | cap10 | trade_through | -4,427.09 [-5,008.89, -3,823.00] | 3,941.78 | -6,977.88 | -741.45 | 6,967 | -1.917 |
+| small_tick | ext | cap30 | queue | -4,175.87 [-4,783.38, -3,632.78] | 6,079.50 | -8,858.39 | -747.19 | 8,834 | -1.477 |
+| small_tick | ext | cap30 | trade_through | -4,396.33 [-4,944.24, -3,839.37] | 4,271.12 | -7,313.15 | -623.30 | 6,795 | -2.003 |
+| small_tick | naive | cap10 | queue | -2,816.57 [-3,576.26, -2,096.43] | 5,667.71 | -7,267.05 | -706.68 | 7,907 | -1.176 |
+| small_tick | naive | cap10 | trade_through | -251.50 [-1,176.14, 641.30] | 664.06 | -1,516.50 | -163.56 | 1,601 | -0.539 |
+| small_tick | naive | cap30 | queue | -2,581.64 [-3,313.03, -1,861.77] | 5,918.56 | -7,590.30 | -461.40 | 8,718 | -0.999 |
+| small_tick | naive | cap30 | trade_through | -191.92 [-1,109.61, 696.53] | 664.06 | -1,516.50 | -103.98 | 1,601 | -0.411 |
 
 ## Ablation
 

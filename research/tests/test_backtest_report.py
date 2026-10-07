@@ -16,7 +16,7 @@ import backtest_report as br  # noqa: E402
 
 
 def summary(rows):
-    base = {"day": "2025-12-11", "latency_us": 0.0, "fees": "cap30", "fill_rule": "queue", "fills": 10,
+    base = {"day": "2025-12-11", "latency_us": 0.0, "fee_schedule": "cap30", "fill_rule": "queue", "fills": 10,
             "volume": 1000, "max_abs_inventory": 200, "orders": 20}
     return pl.DataFrame([{**base, **r} for r in rows])
 
@@ -45,7 +45,7 @@ def test_bucket_returns_sum_symbols_and_difference_cumulative_pnl():
     for sym, inc in (("X", 1), ("Y", 2)):
         cum = np.cumsum(np.full(10, inc))
         mins.append(pl.DataFrame({"strategy": ["a"] * 10, "symbol": [sym] * 10, "day": ["d"] * 10,
-                                  "latency_us": [0.0] * 10, "fees": ["cap30"] * 10, "fill_rule": ["queue"] * 10,
+                                  "latency_us": [0.0] * 10, "fee_schedule": ["cap30"] * 10, "fill_rule": ["queue"] * 10,
                                   "minute": list(range(10)), "pnl": cum.tolist()}))
     r = br.bucket_returns(pl.concat(mins), ["X", "Y"], "a", width=5)
     assert np.allclose(r, [15 * br.UNIT, 15 * br.UNIT])

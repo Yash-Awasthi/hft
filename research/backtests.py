@@ -51,6 +51,15 @@ def strategy_spec(name, group):
     return specs[name]
 
 
+def summary_row(job, r):
+    """One summary row: the job's labels (the fee scenario as fee_schedule, since the backtest's
+    own `fees` field is the fee PnL) and the backtest's scalar results."""
+    row = {k: job[k] for k in ("strategy", "group", "symbol", "day", "latency_us", "fill_rule")}
+    row["fee_schedule"] = job["fees"]
+    row.update({k: int(v) for k, v in r.items() if not hasattr(v, "shape")})
+    return row
+
+
 def run_job(job):
     sys.path.insert(0, job["py_build"])
     import hftpy
@@ -58,8 +67,7 @@ def run_job(job):
     t0 = time.time()
     name, params = strategy_spec(job["strategy"], job["group"])
     r = hftpy.backtest(job["store"], job["locate"], job["index"], name, params, job["config"])
-    row = {k: job[k] for k in ("strategy", "group", "symbol", "day", "latency_us", "fees", "fill_rule")}
-    row.update({k: (int(v) if not hasattr(v, "shape") else None) for k, v in r.items() if not hasattr(v, "shape")})
+    row = summary_row(job, r)
     row["seconds"] = time.time() - t0
     minutes = r["minute_pnl"].tolist()
     fills = {"ts": r["fill_ts"].tolist(), "shares": r["fill_signed_shares"].tolist(),
@@ -128,7 +136,7 @@ def main():
     with mp.get_context("spawn").Pool(a.workers) as pool:
         for i, (row, mins, fl) in enumerate(pool.imap_unordered(run_job, jobs)):
             rows.append(row)
-            key = {k: row[k] for k in ("strategy", "symbol", "day", "latency_us", "fees", "fill_rule")}
+            key = {k: row[k] for k in ("strategy", "symbol", "day", "latency_us", "fee_schedule", "fill_rule")}
             minutes.append(pl.DataFrame({**{k: [v] * len(mins) for k, v in key.items()},
                                          "minute": list(range(len(mins))), "pnl": mins}))
             if fl["ts"]:
