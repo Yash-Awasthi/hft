@@ -17,6 +17,7 @@
 #include "data/store.hpp"
 #include "feed/itch.hpp"
 #include "strategy/labeler.hpp"
+#include "strategy/lifecycles.hpp"
 #include "strategy/multi_features.hpp"
 
 namespace nb = nanobind;
@@ -64,7 +65,9 @@ nb::list feature_names(std::size_t indices) {
     for (const char* n : strategy::SymbolFeatures::kNames) l.append(n);
     for (std::size_t k = 0; k < indices; ++k)
         for (double tau : strategy::MultiFeatures::kIndexTau)
-            l.append(nb::str(("index" + std::to_string(k) + "_mom_" + std::to_string(int(tau * 1000)) + "ms").c_str()));
+            l.append(nb::str(
+                ("index" + std::to_string(k) + "_mom_" + std::to_string(int(tau * 1000)) + "ms")
+                    .c_str()));
     return l;
 }
 
@@ -72,13 +75,15 @@ nb::list feature_names(std::size_t indices) {
 // index symbols' cross-asset features. Returns {locate: {seq, ts, X}} and "names".
 nb::dict features(const std::string& store, std::vector<std::uint16_t> targets,
                   std::vector<std::uint16_t> index, std::vector<std::uint32_t> sample_every) {
-    if (sample_every.size() != targets.size()) throw std::invalid_argument("one sample_every per target");
+    if (sample_every.size() != targets.size())
+        throw std::invalid_argument("one sample_every per target");
     std::vector<std::uint16_t> all = targets;
     all.insert(all.end(), index.begin(), index.end());
     std::sort(all.begin(), all.end());
     all.erase(std::unique(all.begin(), all.end()), all.end());
     auto slot = [&](std::uint16_t loc) {
-        return static_cast<std::size_t>(std::lower_bound(all.begin(), all.end(), loc) - all.begin());
+        return static_cast<std::size_t>(std::lower_bound(all.begin(), all.end(), loc) -
+                                        all.begin());
     };
     std::vector<std::size_t> index_slots;
     for (auto loc : index) index_slots.push_back(slot(loc));
@@ -162,6 +167,68 @@ nb::dict labels(const std::string& store, std::uint16_t locate, std::vector<std:
     return d;
 }
 
+// Lifecycles of sampled real orders joining the best quote, and markouts of their fills.
+nb::dict lifecycles(const std::string& store, std::uint16_t locate, std::uint64_t sample_one_in,
+                    double horizon_s, std::vector<double> taus_s) {
+    strategy::LifecycleTracker t(sample_one_in, horizon_s, taus_s);
+    {
+        nb::gil_scoped_release release;
+        t.run(store, locate);
+    }
+    const auto& L = t.lifecycles();
+    const std::size_t n = L.size();
+    std::vector<std::uint64_t> ref(n), ts(n);
+    std::vector<std::int8_t> side(n), outcome(n);
+    std::vector<double> cov(n * 7), dur(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        ref[i] = L[i].ref;
+        ts[i] = L[i].ts;
+        side[i] = L[i].side;
+        outcome[i] = static_cast<std::int8_t>(L[i].outcome);
+        dur[i] = L[i].duration_s;
+        const double c[7] = {L[i].queue_ahead,
+                             L[i].opposite_qty,
+                             L[i].imbalance,
+                             L[i].spread_ticks,
+                             L[i].volatility,
+                             L[i].signal,
+                             static_cast<double>(L[i].shares)};
+        std::copy(c, c + 7, cov.data() + i * 7);
+    }
+    const auto& F = t.fills();
+    const std::size_t m = F.size(), k = taus_s.size();
+    std::vector<std::uint64_t> fref(m), fts(m);
+    std::vector<std::int8_t> fside(m), sweep(m), cancel_after(m);
+    std::vector<double> fshares(m), fahead(m), marks(m * k);
+    for (std::size_t i = 0; i < m; ++i) {
+        fref[i] = F[i].ref;
+        fts[i] = F[i].ts;
+        fside[i] = F[i].side;
+        sweep[i] = F[i].sweep;
+        cancel_after[i] = F[i].cancel_after;
+        fshares[i] = F[i].shares;
+        fahead[i] = F[i].queue_ahead_at_arrival;
+        std::copy(F[i].markout.begin(), F[i].markout.end(), marks.data() + i * k);
+    }
+    nb::dict d, f;
+    d["ref"] = array(std::move(ref), n);
+    d["ts"] = array(std::move(ts), n);
+    d["side"] = array(std::move(side), n);
+    d["outcome"] = array(std::move(outcome), n);
+    d["duration_s"] = array(std::move(dur), n);
+    d["covariates"] = array(std::move(cov), n, 7);
+    f["ref"] = array(std::move(fref), m);
+    f["ts"] = array(std::move(fts), m);
+    f["side"] = array(std::move(fside), m);
+    f["sweep"] = array(std::move(sweep), m);
+    f["cancel_after"] = array(std::move(cancel_after), m);
+    f["shares"] = array(std::move(fshares), m);
+    f["queue_ahead"] = array(std::move(fahead), m);
+    f["markout"] = array(std::move(marks), m, k);
+    d["fills"] = f;
+    return d;
+}
+
 }  // namespace
 
 NB_MODULE(hftpy, m) {
@@ -170,4 +237,9 @@ NB_MODULE(hftpy, m) {
           nb::arg("sample_every"));
     m.def("labels", &labels, nb::arg("store"), nb::arg("locate"), nb::arg("event_h"),
           nb::arg("clock_h_ns"), nb::arg("tick") = 100);
+    m.def("lifecycles", &lifecycles, nb::arg("store"), nb::arg("locate"), nb::arg("sample_one_in"),
+          nb::arg("horizon_s"), nb::arg("taus_s"));
+    m.attr("lifecycle_covariates") =
+        nb::make_tuple("queue_ahead", "opposite_qty", "imbalance", "spread_ticks", "volatility",
+                       "ofi_signal", "shares");
 }
