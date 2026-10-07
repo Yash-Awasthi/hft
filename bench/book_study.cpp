@@ -2,7 +2,7 @@
 // end-to-end replay, over the busiest symbols of a store. Prints one CSV row per repetition;
 // research/book_study.py turns them into the comparison table.
 // Usage: book_study <store-dir> <mode> [top-n] [reps]
-//   mode: decode | book | replay | book-cg:<variant> (one untimed pass, for Cachegrind)
+//   mode: decode | decode-only | decompress | book | replay | book-cg:<variant> (one untimed pass, for Cachegrind)
 
 #include <hdr/hdr_histogram.h>
 
@@ -19,7 +19,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <memory>
+#include <queue>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -90,6 +92,71 @@ void decode(const std::filesystem::path& dir, const std::vector<std::uint16_t>& 
         if (r > 0)  // first repetition is warm-up
             std::printf("decode,merged,%d,%llu,%.0f,,,,,%llu\n", r, (unsigned long long)n, s * 1e9,
                         (unsigned long long)(cs.h & 0xffff));
+    }
+}
+
+// Decode thread alone: every chunk is decompressed before the clock starts, then the timed
+// loop merges the symbols back into feed order and decodes, as MergedReader's consumer does.
+void decode_only(const std::filesystem::path& dir, const std::vector<std::uint16_t>& locs, int reps) {
+    struct Msg {
+        std::uint64_t seq;
+        std::uint64_t off;
+        std::uint16_t len;
+    };
+    struct Sym {
+        std::vector<std::uint8_t> bytes;
+        std::vector<Msg> msgs;
+    };
+    std::vector<Sym> syms(locs.size());
+    for (std::size_t i = 0; i < locs.size(); ++i) {
+        data::SymbolReader rd(dir, locs[i]);
+        data::Record rec{};
+        while (rd.next(rec)) {
+            syms[i].msgs.push_back({rec.seq, syms[i].bytes.size(), rec.len});
+            syms[i].bytes.insert(syms[i].bytes.end(), rec.data, rec.data + rec.len);
+        }
+    }
+    using Head = std::pair<std::uint64_t, std::uint32_t>;
+    for (int r = 0; r <= reps; ++r) {
+        Checksum cs;
+        std::uint64_t n = 0;
+        std::vector<std::size_t> pos(syms.size(), 0);
+        const auto t0 = std::chrono::steady_clock::now();
+        std::priority_queue<Head, std::vector<Head>, std::greater<>> heap;
+        for (std::uint32_t i = 0; i < syms.size(); ++i)
+            if (!syms[i].msgs.empty()) heap.push({syms[i].msgs[0].seq, i});
+        while (!heap.empty()) {
+            const std::uint32_t i = heap.top().second;
+            heap.pop();
+            const Msg& m = syms[i].msgs[pos[i]];
+            itch::dispatch(syms[i].bytes.data() + m.off, m.len, cs);
+            ++n;
+            if (++pos[i] < syms[i].msgs.size()) heap.push({syms[i].msgs[pos[i]].seq, i});
+        }
+        const double s = secs(t0, std::chrono::steady_clock::now());
+        if (r > 0)
+            std::printf("decode-only,merged,%d,%llu,%.0f,,,,,%llu\n", r, (unsigned long long)n,
+                        s * 1e9, (unsigned long long)(cs.h & 0xffff));
+    }
+}
+
+// Decompression alone on one thread: every chunk of every symbol, records walked, not decoded.
+void decompress(const std::filesystem::path& dir, const std::vector<std::uint16_t>& locs, int reps) {
+    for (int r = 0; r <= reps; ++r) {
+        std::uint64_t n = 0, bytes = 0;
+        const auto t0 = std::chrono::steady_clock::now();
+        for (const std::uint16_t loc : locs) {
+            data::SymbolReader rd(dir, loc);
+            data::Record rec{};
+            while (rd.next(rec)) {
+                bytes += rec.len;
+                ++n;
+            }
+        }
+        const double s = secs(t0, std::chrono::steady_clock::now());
+        if (r > 0)
+            std::printf("decompress,zstd,%d,%llu,%.0f,,,,,%llu\n", r, (unsigned long long)n,
+                        s * 1e9, (unsigned long long)(bytes & 0xffff));
     }
 }
 
@@ -329,6 +396,10 @@ int main(int argc, char** argv) {
     std::printf("mode,variant,rep,events,total_ns,p50_ns,p99_ns,p999_ns,max_ns,check\n");
     if (mode == "decode")
         decode(dir, locs, reps);
+    else if (mode == "decode-only")
+        decode_only(dir, locs, reps);
+    else if (mode == "decompress")
+        decompress(dir, locs, reps);
     else if (mode == "book" || mode.starts_with("book-cg:"))
         book_mode(dir, locs, reps, mode);
     else if (mode == "replay")

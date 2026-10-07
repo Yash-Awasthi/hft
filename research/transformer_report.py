@@ -38,12 +38,14 @@ def main():
           for k, v in agr.items() if isinstance(v, dict)], "",
         "Golden test in CI (`EventTransformer.MatchesPyTorchAndAgreesOnDecisions`): random weights, 300 events, "
         "window 32 so the ring wraps; error below 2e-5 and identical forecast decisions on both paths.", "",
-        "## Step latency (provisional, see STATUS item 1)", "",
+        "## Step latency at the wall-clock baseline", "",
         "| Path | Median ns per event | Target |", "|---|---|---|",
         f"| Scalar C++ | {int(med.get('scalar', 0)):,} | - |",
-        f"| AVX2 float32 | {int(med.get('avx2', 0)):,} | < 2,000 (miss) |", "",
-        "`hft_bench --benchmark_filter=EventStep` with `HFT_TRANSFORMER` pointing at the trained weights; window "
-        "full. Measured while a DP solve ran on other cores.", "",
+        f"| AVX2 float32 | {int(med.get('avx2', 0)):,} | < 2,000 "
+        f"({'met' if int(med.get('avx2', 0)) < 2000 else 'miss'}) |", "",
+        "`hft_bench --benchmark_filter=EventStep --benchmark_repetitions=10` with `HFT_TRANSFORMER` pointing at "
+        "the trained weights, pinned to one virtual CPU; window full. Idle machine on mains, turbo off "
+        "(maximum processor state 99% for every core class, boost mode off; about 2.4 GHz).", "",
         "## Not built", "",
         "- int8 and AVX-VNNI paths, ONNX Runtime and LibTorch baselines (Stretch).",
         "- Inference cost in the backtest's processing latency, stale-event policy, PnL against model latency.",

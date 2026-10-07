@@ -60,7 +60,7 @@ def main():
         with open(path) as f:
             rows += list(csv.DictReader(f))
 
-    for mode in ("decode", "replay"):
+    for mode in ("decode", "decode-only", "decompress", "replay"):
         r = [x for x in rows if x["mode"] == mode]
         if not r:
             continue

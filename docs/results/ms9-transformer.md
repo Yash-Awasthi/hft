@@ -26,14 +26,14 @@ The generator's next-event cross entropy is 0.544 nats below the unigram baselin
 
 Golden test in CI (`EventTransformer.MatchesPyTorchAndAgreesOnDecisions`): random weights, 300 events, window 32 so the ring wraps; error below 2e-5 and identical forecast decisions on both paths.
 
-## Step latency (provisional, see STATUS item 1)
+## Step latency at the wall-clock baseline
 
-| Path | Median ns per event | Target |
-|---|---|---|
-| Scalar C++ | 9,713 | - |
-| AVX2 float32 | 2,494 | < 2,000 (miss) |
+| Model | Scalar median ns | AVX2 median ns | AVX2 forecast only | Target |
+|---|---|---|---|---|
+| Base | 14,180 | 3,435 | 3,205 | < 2,000 (miss) |
+| Small | 9,598 | 2,935 | 2,786 | < 2,000 (miss) |
 
-`hft_bench --benchmark_filter=EventStep` with `HFT_TRANSFORMER` pointing at the trained weights; window full. Measured while a DP solve ran on other cores.
+`hft_bench --benchmark_filter=EventStep --benchmark_repetitions=10` with `HFT_TRANSFORMER` pointing at the trained weights, pinned to one virtual CPU; window full. Idle machine on mains, turbo off (maximum processor state 99% for every core class, boost mode off; about 2.4 GHz). Standard deviations across repetitions are 9 to 40 ns.
 
 ## Small model
 
@@ -46,14 +46,14 @@ Golden test in CI (`EventTransformer.MatchesPyTorchAndAgreesOnDecisions`): rando
 
 Kernel against PyTorch, 200,000 INTC validation events, with attention scores from the transposed keys: max abs logit error 1.6e-5 on both paths; same arg-max at 10 and 100 events and same next-event class on 100% of events for both paths. The base model: 7.2e-6 (AVX2), forecast decisions 100%, next-event class 99.9995%.
 
-Step latency on an idle machine, 10 repetitions, window full (provisional until the wall-clock baseline, STATUS item 1). The AVX2 path computes each head's scores 8 window positions per FMA from keys stored transposed, instead of one horizontal reduction per position; "before" is the previous kernel built from the parent commit and run back to back:
+Step latency on an idle machine with turbo on (before the baseline), 10 repetitions, window full. The AVX2 path computes each head's scores 8 window positions per FMA from keys stored transposed, instead of one horizontal reduction per position; "before" is the previous kernel built from the parent commit and run back to back:
 
 | Model | Scalar median ns | AVX2 before | AVX2 median ns | AVX2 forecast only | Target |
 |---|---|---|---|---|---|
 | Base | 7,699 | 1,925 | 1,841 | 1,725 | < 2,000 |
 | Small | 5,191 | 1,867 | 1,537 | 1,459 | < 2,000 |
 
-Standard deviations across repetitions are 6 to 18 ns. The earlier figures of about 2,130 ns for both models were taken while a backtest sweep ran on 4 to 6 cores; on an idle machine both kernels meet the target, and the transposed scores take 4% (base) and 18% (small) off the step.
+Standard deviations across repetitions are 6 to 18 ns. The earlier figures of about 2,130 ns for both models were taken while a backtest sweep ran on 4 to 6 cores; with turbo on (about 4.7 GHz) both kernels met the target, but not at the baseline above; the transposed scores take 4% (base) and 18% (small) off the step.
 
 ## Not built
 
