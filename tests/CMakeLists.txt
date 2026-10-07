@@ -6,7 +6,8 @@ add_executable(hft_tests endian_test.cpp itch_test.cpp store_test.cpp gzip_test.
                          replay_exchange_test.cpp experiment_test.cpp
                          fixture_test.cpp features_test.cpp accounting_test.cpp
                          backtest_test.cpp queue_reactive_test.cpp tick_stats_test.cpp
-                         trades_test.cpp)
+                         trades_test.cpp event_tokens_test.cpp
+                         event_transformer_test.cpp)
 target_link_libraries(hft_tests PRIVATE hft_core hft_data GTest::gtest_main rapidcheck tlx
                                         hft_experiment zstd::libzstd)
 target_compile_definitions(hft_tests PRIVATE HFT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

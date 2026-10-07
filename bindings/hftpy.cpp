@@ -25,6 +25,8 @@
 #include "strategy/multi_features.hpp"
 #include "strategy/qr_events.hpp"
 #include "strategy/trades.hpp"
+#include "strategy/event_tokens.hpp"
+#include "strategy/event_transformer.hpp"
 #include "sources/queue_reactive.hpp"
 
 namespace nb = nanobind;
@@ -493,6 +495,54 @@ nb::dict trades(const std::string& store, std::uint16_t locate, std::uint64_t st
     return d;
 }
 
+// Event tokens of one symbol for the event transformer (strategy/event_tokens.hpp).
+nb::dict tokens(const std::string& store, std::uint16_t locate, std::uint64_t start_ns,
+                std::uint64_t end_ns) {
+    strategy::Tokenizer t(start_ns, end_ns);
+    {
+        nb::gil_scoped_release release;
+        t.run(store, locate);
+    }
+    strategy::TokenRecord r = t.record();
+    const std::size_t n = r.ts.size();
+    nb::dict d;
+    d["ts"] = array(std::move(r.ts), n);
+    d["type"] = array(std::move(r.type), n);
+    d["side"] = array(std::move(r.side), n);
+    d["dist"] = array(std::move(r.dist), n);
+    d["size"] = array(std::move(r.size), n);
+    d["log_dt"] = array(std::move(r.log_dt), n);
+    d["mid_after"] = array(std::move(r.mid_after), n);
+    return d;
+}
+
+// Runs the C++ event transformer over one token sequence; returns forecast and generator logits.
+using U8 = nb::ndarray<const std::uint8_t, nb::ndim<1>, nb::c_contig>;
+nb::dict transformer_run(const std::string& weights, U8 type, U8 side, U8 dist, U8 size,
+                         nb::ndarray<const float, nb::ndim<1>, nb::c_contig> log_dt, bool avx2) {
+    const strategy::EventTransformer m(weights);
+    const std::size_t n = type.shape(0);
+    const auto nf = static_cast<std::size_t>(m.forecasts());
+    std::vector<float> f(n * nf), g(n * strategy::EventTransformer::kGen);
+    {
+        nb::gil_scoped_release release;
+        auto s = m.state();
+        const std::uint8_t *ty = type.data(), *si = side.data(), *di = dist.data(), *sz = size.data();
+        const float* dt = log_dt.data();
+        for (std::size_t i = 0; i < n; ++i) {
+            const strategy::EventToken t{ty[i], si[i], di[i], sz[i], dt[i]};
+            if (avx2)
+                m.step<true>(s, t, f.data() + i * nf, g.data() + i * strategy::EventTransformer::kGen);
+            else
+                m.step<false>(s, t, f.data() + i * nf, g.data() + i * strategy::EventTransformer::kGen);
+        }
+    }
+    nb::dict d;
+    d["forecast"] = array(std::move(f), n, nf);
+    d["gen"] = array(std::move(g), n, static_cast<std::size_t>(strategy::EventTransformer::kGen));
+    return d;
+}
+
 }  // namespace
 
 NB_MODULE(hftpy, m) {
@@ -507,6 +557,9 @@ NB_MODULE(hftpy, m) {
           nb::arg("start_ns"), nb::arg("end_ns"));
     m.def("backtest", &backtest_run, nb::arg("store"), nb::arg("target"), nb::arg("index"),
           nb::arg("strategy"), nb::arg("params"), nb::arg("config"));
+    m.def("transformer_run", &transformer_run, nb::arg("weights"), nb::arg("type"), nb::arg("side"),
+          nb::arg("dist"), nb::arg("size"), nb::arg("log_dt"), nb::arg("avx2") = true);
+    m.def("tokens", &tokens, nb::arg("store"), nb::arg("locate"), nb::arg("start_ns"), nb::arg("end_ns"));
     m.def("trades", &trades, nb::arg("store"), nb::arg("locate"), nb::arg("start_ns"), nb::arg("end_ns"));
     m.def("qr_events", &qr_events, nb::arg("store"), nb::arg("locate"), nb::arg("K"),
           nb::arg("tick"), nb::arg("start_ns"), nb::arg("end_ns"));

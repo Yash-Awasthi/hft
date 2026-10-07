@@ -6,7 +6,7 @@ signal on the grid features predicting the mid change over the next second; mark
 from imbalance, spread and signal buckets; empirical transitions (dp.estimate); exact policy
 iteration. Two tables per group: without the signal (strategy 3) and with it (strategy 4).
 
-Usage: python research/run_dp.py <py-build> <out-dir> <train-store>...
+Usage: python research/run_dp.py <py-build> <out-dir> <train-store>... [--groups large_tick,small_tick]
 """
 
 import json
@@ -111,14 +111,20 @@ def signal_of(gs, sig):
 
 
 def main():
-    py_build, out = sys.argv[1], pathlib.Path(sys.argv[2])
-    stores = sys.argv[3:]
+    args = sys.argv[1:]
+    groups = ("large_tick", "small_tick")
+    if "--groups" in args:
+        i = args.index("--groups")
+        groups = tuple(args[i + 1].split(","))
+        del args[i:i + 2]
+    py_build, out = args[0], pathlib.Path(args[1])
+    stores = args[2:]
     sys.path.insert(0, py_build)
     import hftpy
 
     out.mkdir(parents=True, exist_ok=True)
     universe = tomllib.loads((ROOT / "configs/universe.toml").read_text())
-    for group in ("large_tick", "small_tick"):
+    for group in groups:
         t0 = time.time()
         gs = grids(hftpy, stores, universe[group]["symbols"])
         sig, r2 = fit_signal(gs)
