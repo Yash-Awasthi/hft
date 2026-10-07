@@ -64,7 +64,11 @@ def main():
             ker = np.r_[1.0, np.arange(1, n) ** -max(beta, 0.05)]
             x, cost, twap = impact.optimal_schedule(ker, 1.0)
             lines.append(f"| {g} | {beta:.2f} | {n} | {cost / twap:.3f} | {x[0] * n:.2f} |")
-    lines += ["", "## Not built", "",
+    lines += ["", "With beta near zero the kernel is close to permanent impact: TWAP is within 1% of the optimum, and "
+              "the unconstrained optimum alternates in sign (negative front-loading means a first trade against the "
+              "direction), which a long-only schedule would not allow. The empirical kernels fail the positivity "
+              "check because the unregularized least-squares G rises at long lags; a regularized or parametric fit "
+              "is needed before the kernel is used for execution.", "", "## Not built", "",
               "- Mechanical versus reactive split: needs the simulator with reaction on and off; the queue-reactive "
               "simulator failed validation at the current tick (MS7), so the split is not reported.",
               "- Synthetic metaorders of Maitrier, Loeper and Bouchaud, injected metaorders, the latent order book "
