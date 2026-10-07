@@ -18,6 +18,13 @@ namespace hft::book {
 
 inline constexpr std::uint32_t kNoOrder = 0xffffffffu;
 
+// One lookup that serves the following insert or erase. `at` is opaque to callers; val is
+// kNoOrder when the key is absent.
+struct IdProbe {
+    std::size_t at;
+    std::uint32_t val;
+};
+
 namespace detail {
 
 // Key (40 bits) and order index (24 bits) packed in 8 bytes; all ones marks an empty slot,
@@ -112,6 +119,15 @@ class LinearMap : public detail::Table {
         }
     }
 
+    // The key's slot, or the first empty slot of its probe path.
+    IdProbe probe(std::uint64_t key) const {
+        for (std::size_t i = home(key);; i = (i + 1) & mask_) {
+            const detail::Slot& s = slots_[i];
+            if (s.key() == key) return {i, s.val()};
+            if (s.empty()) return {i, kNoOrder};
+        }
+    }
+
     // `key` must be absent.
     void insert(std::uint64_t key, std::uint32_t val) {
         if ((size_ + 1) * 2 > capacity()) grow();
@@ -120,13 +136,21 @@ class LinearMap : public detail::Table {
         slots_[i] = detail::Slot::make(key, val);
         ++size_;
     }
+    // `p` is a probe for the absent `key` with the table unchanged since.
+    void insert_at(IdProbe p, std::uint64_t key, std::uint32_t val) {
+        if ((size_ + 1) * 2 > capacity()) return insert(key, val);
+        slots_[p.at] = detail::Slot::make(key, val);
+        ++size_;
+    }
 
     bool erase(std::uint64_t key) {
-        std::size_t i = home(key);
-        for (;; i = (i + 1) & mask_) {
-            if (slots_[i].key() == key) break;
-            if (slots_[i].empty()) return false;
-        }
+        const IdProbe p = probe(key);
+        if (p.val == kNoOrder) return false;
+        erase_at(p.at);
+        return true;
+    }
+    // Erases the entry in slot i; returns the slot left empty.
+    std::size_t erase_at(std::size_t i) {
         // Pull back any later entry whose probe path crosses the hole.
         for (std::size_t j = (i + 1) & mask_; !slots_[j].empty(); j = (j + 1) & mask_) {
             if (dist(j, slots_[j].key()) >= ((j - i) & mask_)) {
@@ -136,7 +160,13 @@ class LinearMap : public detail::Table {
         }
         slots_[i].clear();
         --size_;
-        return true;
+        return i;
+    }
+    // Probe `p` of an absent key, updated for an erase_at that left `hole` empty. Erasing
+    // only shifts entries back within a run, so the hole is the run's single new empty slot.
+    IdProbe after_erase(IdProbe p, std::uint64_t key, std::size_t hole) const {
+        const std::size_t h = home(key);
+        return ((hole - h) & mask_) < ((p.at - h) & mask_) ? IdProbe{hole, kNoOrder} : p;
     }
 
    private:
@@ -162,6 +192,18 @@ class RobinHoodMap : public detail::Table {
         }
     }
 
+    IdProbe probe(std::uint64_t key) const {
+        for (std::size_t i = home(key), d = 0;; i = (i + 1) & mask_, ++d) {
+            const detail::Slot& s = slots_[i];
+            if (s.key() == key) return {i, s.val()};
+            if (s.empty() || dist(i, s.key()) < d) return {0, kNoOrder};
+        }
+    }
+
+    // Insertion displaces entries, so it probes again.
+    void insert_at(IdProbe, std::uint64_t key, std::uint32_t val) { insert(key, val); }
+    IdProbe after_erase(IdProbe p, std::uint64_t, std::size_t) const { return p; }
+
     void insert(std::uint64_t key, std::uint32_t val) {
         if ((size_ + 1) * 2 > capacity()) grow();
         detail::Slot cur = detail::Slot::make(key, val);
@@ -181,12 +223,12 @@ class RobinHoodMap : public detail::Table {
     }
 
     bool erase(std::uint64_t key) {
-        std::size_t i = home(key);
-        for (std::size_t d = 0;; i = (i + 1) & mask_, ++d) {
-            const detail::Slot& s = slots_[i];
-            if (s.key() == key) break;
-            if (s.empty() || dist(i, s.key()) < d) return false;
-        }
+        const IdProbe p = probe(key);
+        if (p.val == kNoOrder) return false;
+        erase_at(p.at);
+        return true;
+    }
+    std::size_t erase_at(std::size_t i) {
         for (std::size_t j = (i + 1) & mask_; !slots_[j].empty() && dist(j, slots_[j].key()) != 0;
              j = (j + 1) & mask_) {
             slots_[i] = slots_[j];
@@ -194,7 +236,7 @@ class RobinHoodMap : public detail::Table {
         }
         slots_[i].clear();
         --size_;
-        return true;
+        return i;
     }
 
    private:
@@ -251,6 +293,15 @@ class DirectMap {
             ++direct_;
         s = detail::Slot::make(key, val);
     }
+
+    // The probe handle is the key itself; each operation looks up again.
+    IdProbe probe(std::uint64_t key) const { return {key, find(key)}; }
+    void insert_at(IdProbe, std::uint64_t key, std::uint32_t val) { insert(key, val); }
+    std::size_t erase_at(std::size_t key) {
+        erase(key);
+        return 0;
+    }
+    IdProbe after_erase(IdProbe p, std::uint64_t, std::size_t) const { return p; }
 
     bool erase(std::uint64_t key) {
         detail::Slot& s = slots_[key & (kSlots - 1)];

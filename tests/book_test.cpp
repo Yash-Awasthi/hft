@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <random>
 #include <vector>
 
 #include "book/btree_book.hpp"
@@ -302,4 +303,58 @@ TYPED_TEST(TickQueue, NextLevelWalksAllLevelsInOrder) {
     got.clear();
     for (auto f = b.front(kS); f; f = b.next_level(kS, f->price)) got.push_back(f->price);
     EXPECT_EQ(got, (std::vector<std::uint32_t>{50'0100, 60'0000}));
+}
+
+// The single-probe operations must leave the table exactly as find + insert / erase do,
+// because checkpoints store the raw table image. Replace is erase_at then after_erase.
+template <class M>
+class IdMapProbe : public ::testing::Test {};
+using IdMaps = ::testing::Types<LinearMap, RobinHoodMap, DirectMap<64>>;
+TYPED_TEST_SUITE(IdMapProbe, IdMaps);
+
+TYPED_TEST(IdMapProbe, SameImageAsFindInsertErase) {
+    TypeParam a(16), b(16);
+    std::mt19937_64 rng(11);
+    std::vector<std::uint64_t> live;
+    std::uint64_t next = 1;
+    for (int step = 0; step < 200000; ++step) {
+        const auto op = rng() % 8;
+        if (live.empty() || op < 3) {
+            const std::uint64_t key = rng() % 4 ? next++ : rng() % next;
+            const IdProbe p = a.probe(key);
+            ASSERT_EQ(p.val, b.find(key));
+            if (p.val != kNoOrder) continue;
+            const auto v = static_cast<std::uint32_t>(step & 0xffffff);
+            a.insert_at(p, key, v);
+            b.insert(key, v);
+            live.push_back(key);
+        } else {
+            const std::size_t k = rng() % live.size();
+            const std::uint64_t key = live[k];
+            const IdProbe p = a.probe(key);
+            ASSERT_EQ(p.val, b.find(key));
+            if (op < 6) {
+                a.erase_at(p.at);
+                b.erase(key);
+                live[k] = live.back();
+                live.pop_back();
+            } else {
+                const std::uint64_t nk = op == 6 ? key : next++;
+                const IdProbe q = nk == key ? IdProbe{0, kNoOrder} : a.probe(nk);
+                ASSERT_EQ(q.val, kNoOrder);
+                const std::size_t hole = a.erase_at(p.at);
+                a.insert_at(nk == key ? a.probe(nk) : a.after_erase(q, nk, hole), nk, p.val);
+                b.erase(key);
+                b.insert(nk, p.val);
+                live[k] = nk;
+            }
+        }
+        if (step % 997 == 0 || step == 199999) {
+            std::vector<std::uint8_t> ia, ib;
+            a.save(ia);
+            b.save(ib);
+            ASSERT_EQ(ia, ib) << "step " << step;
+        }
+    }
+    EXPECT_EQ(a.size(), live.size());
 }

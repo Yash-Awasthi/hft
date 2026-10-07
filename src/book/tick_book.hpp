@@ -60,9 +60,10 @@ class TickBook {
 
     bool add(std::uint64_t ref, Side side, std::uint32_t shares, std::uint32_t price,
              std::uint64_t seq, std::uint32_t owner = 0) {
-        if (shares == 0 || !valid_price(price) || ref >= kMaxRef || ids_.find(ref) != kNoOrder)
-            return false;
-        place(ref, static_cast<int>(side), shares, price, seq, owner);
+        if (shares == 0 || !valid_price(price) || ref >= kMaxRef) return false;
+        const IdProbe at = ids_.probe(ref);
+        if (at.val != kNoOrder) return false;
+        place(ref, static_cast<int>(side), shares, price, seq, owner, at);
         return true;
     }
 
@@ -70,22 +71,24 @@ class TickBook {
     bool cancel(std::uint64_t ref, std::uint32_t shares) { return reduce(ref, shares); }
 
     bool erase(std::uint64_t ref) {
-        const std::uint32_t i = ids_.find(ref);
-        if (i == kNoOrder) return false;
-        remove(i, ref);
+        const IdProbe at = ids_.probe(ref);
+        if (at.val == kNoOrder) return false;
+        remove(at);
         return true;
     }
 
     bool replace(std::uint64_t old_ref, std::uint64_t new_ref, std::uint32_t shares,
                  std::uint32_t price, std::uint64_t seq) {
-        const std::uint32_t i = ids_.find(old_ref);
-        if (i == kNoOrder || shares == 0 || !valid_price(price)) return false;
-        if (new_ref >= kMaxRef || (new_ref != old_ref && ids_.find(new_ref) != kNoOrder))
+        const IdProbe old = ids_.probe(old_ref);
+        if (old.val == kNoOrder || shares == 0 || !valid_price(price) || new_ref >= kMaxRef)
             return false;
-        const int s = side_of(o_.px(i));
-        const std::uint32_t owner = o_.owner(i);
-        remove(i, old_ref);
-        place(new_ref, s, shares, price, seq, owner);
+        IdProbe at{0, kNoOrder};
+        if (new_ref != old_ref && (at = ids_.probe(new_ref)).val != kNoOrder) return false;
+        const int s = side_of(o_.px(old.val));
+        const std::uint32_t owner = o_.owner(old.val);
+        const std::size_t hole = remove(old);
+        at = new_ref == old_ref ? ids_.probe(new_ref) : ids_.after_erase(at, new_ref, hole);
+        place(new_ref, s, shares, price, seq, owner, at);
         return true;
     }
 
@@ -586,7 +589,7 @@ class TickBook {
     }
 
     void place(std::uint64_t ref, int s, std::uint32_t shares, std::uint32_t price,
-               std::uint64_t seq, std::uint32_t owner) {
+               std::uint64_t seq, std::uint32_t owner, IdProbe at) {
         std::uint32_t i;
         if (free_ != kNoOrder) {
             i = free_;
@@ -604,15 +607,16 @@ class TickBook {
             l.head = i;
         l.tail = i;
         l.qty += shares;
-        ids_.insert(ref, i);
+        ids_.insert_at(at, ref, i);
         ++live_;
     }
 
     bool reduce(std::uint64_t ref, std::uint32_t shares) {
-        const std::uint32_t i = ids_.find(ref);
+        const IdProbe at = ids_.probe(ref);
+        const std::uint32_t i = at.val;
         if (i == kNoOrder || shares == 0 || shares > o_.qty(i)) return false;
         if (shares == o_.qty(i)) {
-            remove(i, ref);
+            remove(at);
             return true;
         }
         o_.qty(i) -= shares;
@@ -620,7 +624,9 @@ class TickBook {
         return true;
     }
 
-    void remove(std::uint32_t i, std::uint64_t ref) {
+    // Returns the ID slot left empty, as erase_at does.
+    std::size_t remove(IdProbe id) {
+        const std::uint32_t i = id.val;
         const std::uint32_t stored = o_.px(i), next = o_.next(i), prev = o_.prev(i);
         const Loc at = locate(stored);
         Level& l = *at.l;
@@ -634,10 +640,11 @@ class TickBook {
         else
             l.tail = prev;
         drop_if_empty(side_of(stored), at);
-        ids_.erase(ref);
+        const std::size_t hole = ids_.erase_at(id.at);
         o_.next(i) = free_;
         free_ = i;
         --live_;
+        return hole;
     }
 
     Store o_;
