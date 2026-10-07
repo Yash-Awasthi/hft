@@ -81,6 +81,31 @@ def fit_signal(gs):
     return {"weights": w, "means": mu, "stds": sd, "edges": edges}, float(r2)
 
 
+def fit_intensity(gs):
+    """Fill intensity Lambda(d) = A exp(-k d) for a one-lot quote d ticks from the mid, from
+    how often any execution happens at the touch in a step, by half-spread: lambda =
+    -ln(1 - P(execution)) / step. Log-linear least squares over half-spreads with data."""
+    d_all, hit_all = [], []
+    for g in gs:
+        half = (g["ask_px"] - g["bid_px"]) / 200.0
+        for k in range(2):
+            d_all.append(half)
+            hit_all.append(g["exec"][:, k] > 0)
+    d, hit = np.concatenate(d_all), np.concatenate(hit_all)
+    xs, ys = [], []
+    for v in np.unique(np.round(d * 2) / 2):
+        sel = np.round(d * 2) / 2 == v
+        if sel.sum() < 1000:
+            continue
+        p = min(hit[sel].mean(), 0.999)
+        xs.append(v)
+        ys.append(np.log(-np.log1p(-p) / (STEP_NS * 1e-9)))
+    if len(xs) < 2:
+        return float(np.exp(ys[0])) if ys else 1.0, 1.5
+    k, logA = np.polyfit(xs, ys, 1)
+    return float(np.exp(logA)), float(-k)
+
+
 def signal_of(gs, sig):
     return [np.clip((np.nan_to_num(g["X"]) - sig["means"]) / sig["stds"], -5, 5) @ sig["weights"] for g in gs]
 
@@ -97,6 +122,7 @@ def main():
         t0 = time.time()
         gs = grids(hftpy, stores, universe[group]["symbols"])
         sig, r2 = fit_signal(gs)
+        A, k = fit_intensity(gs)
         sigs = signal_of(gs, sig)
         for name, use_signal in (("nosignal", False), ("signal", True)):
             # Without the signal every state falls in the middle bucket, here and in C++.
@@ -108,7 +134,7 @@ def main():
                     "signal_r2_train": r2, "policy_iterations": int(iters), "Q": Q, "phi": PHI,
                     "discount": DISCOUNT, "rebate_ticks": REBATE_TICKS, "fee_ticks": FEE_TICKS,
                     "step_ns": STEP_NS, "action_share": np.bincount(pi.ravel(), minlength=dp.N_ACTIONS).tolist(),
-                    "value_flat_mean": float(V[Q].mean())}
+                    "value_flat_mean": float(V[Q].mean()), "as_A": A, "as_k": k}
             used = {**sig, "edges": edges}
             dp.export(out / f"dp_{group}_{name}.bin", pi, Q, used, meta)
             print(json.dumps(meta), f"{time.time() - t0:.0f}s", flush=True)
