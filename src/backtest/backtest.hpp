@@ -108,7 +108,9 @@ class Backtest {
         all.insert(all.end(), index.begin(), index.end());
         std::vector<std::size_t> index_slots;
         for (std::size_t i = 1; i < all.size(); ++i) index_slots.push_back(i);
-        strategy::MultiFeatures mf(all.size(), index_slots);
+        strategy::FeatureParams fp;
+        fp.tick = c_.exchange.tick;  // the strategy's mid is in exchange ticks
+        strategy::MultiFeatures mf(all.size(), index_slots, fp);
         mf_ = &mf;
         row_.assign(mf.count(), 0);
 

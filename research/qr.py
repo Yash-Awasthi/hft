@@ -14,7 +14,7 @@ redraw distribution is the time-weighted distribution of n per level.
 import numpy as np
 
 
-def _accumulate(ev, K, N, aes):
+def _accumulate(ev, K, N, aes, weighted):
     kind, side, level = ev["kind"], ev["side"].astype(int), ev["level"].astype(int)
     ts = ev["ts"].astype(np.int64)
     counted = (ev["after_move"] == 0) & (kind < 3)
@@ -34,12 +34,15 @@ def _accumulate(ev, K, N, aes):
     for code, name in ((0, "L"), (1, "C"), (2, "M")):
         sel = counted & (kind == code)
         n_own = q[sel, side[sel] * K + level[sel] - 1]
-        np.add.at(counts[name], (level[sel] - 1, n_own), 1)
+        w = ev["shares"][sel] / aes if weighted else 1.0
+        np.add.at(counts[name], (level[sel] - 1, n_own), w)
     return time, time_m, counts, int(ev["episodes_moved"]), int(ev["episodes_refilled"]), float(dt.sum())
 
 
-def calibrate(evs, K, N, tick=100, aes=None):
-    """Pooled over the event records `evs` (one per day, or a single record)."""
+def calibrate(evs, K, N, tick=100, aes=None, weighted=False):
+    """Pooled over the event records `evs` (one per day, or a single record). With `weighted`
+    an event of s shares counts as s / AES unit events, so the share flow in and out of each
+    queue balances as in the data; otherwise every event counts once (model I as published)."""
     evs = [evs] if isinstance(evs, dict) else list(evs)
     if aes is None:
         sizes = np.concatenate([e["shares"][(e["after_move"] == 0) & (e["kind"] < 3)] for e in evs])
@@ -49,7 +52,7 @@ def calibrate(evs, K, N, tick=100, aes=None):
     moved = refilled = 0
     seconds = 0.0
     for e in evs:
-        t, tm, c, mv, rf, sec = _accumulate(e, K, N, aes)
+        t, tm, c, mv, rf, sec = _accumulate(e, K, N, aes, weighted)
         time += t
         time_m += tm
         for k in counts:
@@ -65,7 +68,26 @@ def calibrate(evs, K, N, tick=100, aes=None):
     tot = max(moved + refilled, 1)
     out["theta"] = moved / tot
     out["theta_se"] = float(np.sqrt(out["theta"] * (1 - out["theta"]) / tot))
-    out["seconds"] = seconds
+    out["seconds"], out["moved"], out["refilled"] = seconds, moved, refilled
+    return out
+
+
+def pool(fits):
+    """Calibrations of separate days with the same AES, K and N combined into one."""
+    f0 = fits[0]
+    out = {k: f0[k] for k in ("aes", "K", "N", "tick")}
+    for name in "LCM":
+        n = sum(f["n_" + name] for f in fits)
+        t = sum(f["time_" + name] for f in fits)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            out[name] = np.where(t > 0, n / t, 0.0)
+            out[name + "_se"] = np.where(t > 0, np.sqrt(np.maximum(n, 1)) / t, 0.0)
+        out["n_" + name], out["time_" + name] = n, t
+    out["init"] = out["time_L"] / np.maximum(out["time_L"].sum(axis=1, keepdims=True), 1e-300)
+    moved, refilled = sum(f["moved"] for f in fits), sum(f["refilled"] for f in fits)
+    tot = max(moved + refilled, 1)
+    out["theta"], out["theta_se"] = moved / tot, float(np.sqrt(moved / tot * (1 - moved / tot) / tot))
+    out["moved"], out["refilled"], out["seconds"] = moved, refilled, sum(f["seconds"] for f in fits)
     return out
 
 

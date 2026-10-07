@@ -7,8 +7,10 @@ against hidden orders at sub-penny prices (latent demand inside the tick).
 
 Method A, cross-sectional tick elasticity: with x = ln(tick / sigma_1min) the tick in units of
 one-minute volatility, a ridge regression of each log target on a cubic B-spline of x plus
-ln notional and ln mid. A change of tick by `factor` moves each stock along the curve:
-predicted log change = f(x + ln factor) - f(x), added to the stock's own observed value.
+ln notional and ln mid, on dimensionless targets (spread in ticks, depth relative to volume,
+executions relative to depth). A change of tick by `factor` moves each stock along the curve:
+predicted log change = f(x + ln factor) - f(x) (+ ln factor for the spread in dollars), added
+to the stock's own observed value.
 
 Method B, implicit spread (Dayri and Rosenbaum 2015): eta = eta0 (alpha0 / alpha)^(1 - beta/2)
 with beta in {1/2, 1}; for tick-constrained stocks (eta0 < 1/2) the new spread is the larger of
@@ -27,8 +29,12 @@ from scipy.interpolate import BSpline
 
 TICK = 0.01
 SECONDS = 23_400.0
-TARGETS = {"ln_spread": "spread ($)", "ln_depth": "depth at best (shares)",
-           "ln_turnover": "queue turnover (1/s)"}
+# Dimensionless targets, so that the cross-section identifies a tick effect rather than a
+# volatility or volume effect: spread in ticks, depth over shares traded per minute, and
+# displayed shares executed per day over depth. Only the spread target carries the tick unit.
+TARGETS = {"ln_spread": "spread in ticks", "ln_depth": "depth at best / shares per minute",
+           "ln_turnover": "displayed executions per day / depth"}
+TICK_UNIT = {"ln_spread": 1.0, "ln_depth": 0.0, "ln_turnover": 0.0}
 KNOTS = np.linspace(-6, 4, 9)
 
 
@@ -44,7 +50,7 @@ def load(paths):
         pl.len().alias("days"), pl.col("mid").mean(), pl.col("spread_ticks").mean(),
         pl.col("depth").mean(), pl.col("notional").mean(), pl.col("rv_1min").mean(),
         pl.col("displayed").mean(), pl.col("hidden").mean(), pl.col("subpenny_hidden").mean(),
-        pl.col("eta").mean(), pl.col("one_tick_share").mean())
+        pl.col("eta").mean(), pl.col("one_tick_share").mean(), pl.col("shares").mean())
     return agg.filter(pl.col("days") == len(paths)).with_columns(
         spread=pl.col("spread_ticks") * TICK,
         sigma=(pl.col("rv_1min") / 389).sqrt(),
@@ -52,7 +58,8 @@ def load(paths):
         latent_share=pl.col("subpenny_hidden") / (pl.col("displayed") + pl.col("hidden")),
     ).with_columns(
         x=(TICK / pl.col("sigma")).log(), ln_notional=pl.col("notional").log(), ln_mid=pl.col("mid").log(),
-        ln_spread=pl.col("spread").log(), ln_depth=pl.col("depth").log(), ln_turnover=pl.col("turnover").log(),
+        ln_spread=pl.col("spread_ticks").log(), ln_depth=(pl.col("depth") * 390 / pl.col("shares")).log(),
+        ln_turnover=(pl.col("displayed") / pl.col("depth")).log(),
     ).filter(pl.col("x").is_finite() & pl.col("ln_turnover").is_finite()).sort("symbol")
 
 
@@ -81,9 +88,10 @@ def predict_a(m, df, shift=0.0):
     return ((_design(df, shift) - m["mu"]) / m["sd"]) @ m["w"] + m["b"]
 
 
-def change_a(m, df, log_factor):
-    """Predicted log change of the target when the tick is multiplied by exp(log_factor)."""
-    return predict_a(m, df, log_factor) - predict_a(m, df)
+def change_a(m, df, log_factor, unit=0.0):
+    """Predicted log change of the target when the tick is multiplied by exp(log_factor); with
+    unit = 1 the change of a quantity measured in ticks, converted to dollars."""
+    return predict_a(m, df, log_factor) - predict_a(m, df) + unit * log_factor
 
 
 def leave_stocks_out(df, target, folds=5, seed=0):
@@ -114,7 +122,7 @@ def bootstrap_change(df, target, log_factor, rows, n=200, seed=1):
     out = np.empty((n, len(rows)))
     for i in range(n):
         m = fit_a(df[rng.integers(0, len(df), len(df))], target)
-        out[i] = change_a(m, rows, log_factor)
+        out[i] = change_a(m, rows, log_factor, TICK_UNIT[target])
     return np.quantile(out, [0.05, 0.95], axis=0)
 
 
@@ -149,11 +157,11 @@ def main():
     # Forecast per universe stock under the half-penny tick.
     rows = fit.filter(pl.col("symbol").is_in(list(members)))
     fc = {"symbol": rows["symbol"].to_list(), "group": [members[s] for s in rows["symbol"]],
-          "treated": rows.select(treated).to_series().to_list(), "spread_now": rows["spread"].to_list(),
+          "treated": rows.select(treated).to_series().to_list(), "mid": rows["mid"].to_list(), "spread_now": rows["spread"].to_list(),
           "depth_now": rows["depth"].to_list(), "turnover_now": rows["turnover"].to_list(),
           "eta": rows["eta"].to_list(), "latent_share": rows["latent_share"].to_list()}
     for t in TARGETS:
-        d = change_a(models[t], rows, np.log(0.5))
+        d = change_a(models[t], rows, np.log(0.5), TICK_UNIT[t])
         lo, hi = bootstrap_change(fit, t, np.log(0.5), rows)
         fc[f"a_{t}_change"], fc[f"a_{t}_lo"], fc[f"a_{t}_hi"] = d.tolist(), lo.tolist(), hi.tolist()
     for beta in (0.5, 1.0):
@@ -168,13 +176,13 @@ def main():
                             & (pl.col("notional") < fit["notional"].median()))
     past = {"pilot_like_stocks": pilot_like.height}
     for t in ("ln_spread", "ln_depth"):
-        past[f"pilot_{t}_median_change"] = float(np.median(np.expm1(change_a(models[t], pilot_like, np.log(5)))))
+        past[f"pilot_{t}_median_change"] = float(np.median(np.expm1(change_a(models[t], pilot_like, np.log(5), TICK_UNIT[t]))))
     past["pilot_b_spread_median_change"] = float(np.median(
         [spread_b(s, e, TICK, 5.0, 1.0) / s - 1 for s, e in zip(pilot_like["spread"], pilot_like["eta"])
          if np.isfinite(e)]))
     tokyo_like = fit.filter(treated)
     for t in ("ln_spread", "ln_depth"):
-        past[f"halving_{t}_median_change_treated"] = float(np.median(np.expm1(change_a(models[t], tokyo_like, np.log(0.5)))))
+        past[f"halving_{t}_median_change_treated"] = float(np.median(np.expm1(change_a(models[t], tokyo_like, np.log(0.5), TICK_UNIT[t]))))
     past["halving_b_spread_median_change_treated"] = float(np.median(
         [spread_b(s, e, TICK, 0.5, 1.0) / s - 1 for s, e in zip(tokyo_like["spread"], tokyo_like["eta"])
          if np.isfinite(e)]))

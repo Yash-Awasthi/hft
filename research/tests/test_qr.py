@@ -45,6 +45,10 @@ def test_recovers_rates_and_theta(py_build, ingest):
         ev = hftpy.qr_events(str(store), loc, K, 100, START, END)
     fit = qr.calibrate(ev, K, N, tick=100)
     assert fit["aes"] == AES
+    twice = qr.pool([fit, fit])
+    seen = fit["n_L"] > 0
+    assert np.allclose(twice["L"], fit["L"]) and np.allclose(twice["L_se"][seen] * np.sqrt(2), fit["L_se"][seen])
+    assert twice["theta"] == fit["theta"]
     assert ev["episodes_moved"] == info["moves"]
     z_all = []
     for name, true in (("L", L), ("C", C), ("M", M)):

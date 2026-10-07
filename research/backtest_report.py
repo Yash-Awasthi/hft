@@ -26,7 +26,7 @@ sys.path.insert(0, str(ROOT / "research"))
 import stats  # noqa: E402
 
 DATA = pathlib.Path.home() / "data"
-UNIT = 5e-5  # accounting unit in dollars
+UNIT = 1e-6  # accounting unit in dollars (micro-dollars, src/backtest/accounting.hpp)
 KEYS = ["strategy", "symbol", "day", "latency_us", "fees", "fill_rule"]
 TERMS = ["spread", "adverse", "residual", "fees"]
 

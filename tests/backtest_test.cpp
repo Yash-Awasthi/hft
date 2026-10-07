@@ -8,6 +8,7 @@
 #include "backtest/strategies.hpp"
 #include "data/gzip.hpp"
 #include "data/store.hpp"
+#include "sources/queue_reactive.hpp"
 #include "temp_dir.hpp"
 
 using namespace hft;
@@ -254,4 +255,43 @@ TEST(Strategies, ExtendedGuardsAndTakes) {
     Desired off;
     e.decide(View{1, b, f, 20, 1000.5, 0, w, true}, off);
     EXPECT_EQ(off.take_side, 0);
+}
+
+// At a half-penny tick the strategy's mid (in ticks) must use the exchange tick, or every
+// quote lands outside the price collar.
+TEST(Backtest, NaiveJoinQuotesAtTheHalfPennyTick) {
+    sources::QrParams p;
+    p.K = 3, p.N = 20, p.tick = 50, p.p_ref = 200'025, p.theta = 0.5;
+    const auto cells = static_cast<std::size_t>(p.K * (p.N + 1));
+    p.L.assign(cells, 2.0), p.C.assign(cells, 0), p.M.assign(cells, 0.5), p.init.assign(cells, 0);
+    for (int i = 0; i < p.K; ++i)
+        for (int n = 0; n <= p.N; ++n) {
+            const auto c = static_cast<std::size_t>(i * (p.N + 1) + n);
+            p.C[c] = 0.4 * n;
+            p.init[c] = n >= 2 && n <= 4 ? 1.0 / 3 : 0.0;
+        }
+    p.start_ns = 34'200'000'000'000ull, p.end_ns = p.start_ns + 120'000'000'000ull;
+    std::vector<std::uint8_t> raw;
+    sources::QueueReactive(p, 1).day(raw);
+    TempDir dir{"bt_half"};
+    {
+        data::StoreWriter w(dir.path, 1 << 24, 1 << 20);
+        itch::Frame fr{};
+        std::uint64_t seq = 0;
+        for (std::size_t pos = 0, k; (k = itch::next_frame(raw.data() + pos, raw.size() - pos, fr));
+             pos += k)
+            w.append(load_be16(fr.data + 1), ++seq, itch::detail::read_header(fr.data).timestamp,
+                     fr.data, fr.size);
+        w.finish();
+    }
+    Config c;
+    c.start_ns = p.start_ns + 1'000'000'000ull;
+    c.stop_ns = p.end_ns - 20'000'000'000ull;
+    c.end_ns = p.end_ns - 1'000'000'000ull;
+    c.exchange.tick = 50;
+    NaiveJoin s;
+    Backtest<NaiveJoin> bt(c, s);
+    const Summary r = bt.run(dir.path.string(), 1, {});
+    EXPECT_EQ(r.rejects, 0u);
+    EXPECT_GT(r.fills, 0u);
 }

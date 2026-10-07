@@ -340,8 +340,8 @@ Three separate delays, each configurable and swept from 0 to 500 µs:
 
 ### Accounting and attribution
 
-Cash and inventory are tracked per fill and marked to mid, in integer units of
-$0.00005 (half the ITCH price resolution, so mids are exact). For a fill of size `n` at
+Cash and inventory are tracked per fill and marked to mid, in integer
+micro-dollars (ITCH prices are $0.0001 and mids $0.00005, both exact). For a fill of size `n` at
 price `p` with side `θ`, and `Δm_t` the mid change at event `t`:
 
 ```
