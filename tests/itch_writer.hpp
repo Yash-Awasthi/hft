@@ -25,6 +25,11 @@ struct ItchWriter {
     ItchWriter& add(std::uint64_t ref, char side, std::uint32_t qty, std::uint32_t px) {
         return head('A').n(ref, 8).c(side).n(qty, 4).stock().n(px, 4);
     }
+    ItchWriter& addf(std::uint64_t ref, char side, std::uint32_t qty, std::uint32_t px, const char* mpid) {
+        head('F').n(ref, 8).c(side).n(qty, 4).stock().n(px, 4);
+        for (int i = 0; i < 4; ++i) c(mpid[i]);
+        return *this;
+    }
     ItchWriter& exec(std::uint64_t ref, std::uint32_t qty) {
         return head('E').n(ref, 8).n(qty, 4).n(9, 8);
     }

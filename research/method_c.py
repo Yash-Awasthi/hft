@@ -65,7 +65,7 @@ def run_stock(job):
     for store in job["stores"]:
         ev = hftpy.qr_events(store, hftpy.symbols(store)[job["symbol"]], K, 100, OPEN + 300_000_000_000,
                              CLOSE - 300_000_000_000)
-        f = qr.calibrate(ev, K, N, tick=100, aes=aes, weighted=True)
+        f = qr.calibrate(ev, K, N, tick=100, aes=aes)
         aes = f["aes"]
         fits.append(f)
         del ev

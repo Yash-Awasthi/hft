@@ -7,7 +7,7 @@
 // it remains inside them and otherwise moves to the nearest admissible value. Each limit
 // insertion (L), cancellation (C) or execution (M) at a window level i = 1..K of either side
 // is recorded with the shares at all 2K levels just before it. A replace is a cancellation
-// and an insertion. Depletion episodes of level 1 end either with p_ref moving towards the
+// and an insertion; executions at one level within one timestamp are one market order. Depletion episodes of level 1 end either with p_ref moving towards the
 // emptied side (a move) or otherwise (refilled first, or p_ref moved the other way); their
 // counts estimate theta. Every p_ref change also gets a record of kind 3 holding the shares
 // before it, so the records cut time into intervals of constant state.
@@ -125,9 +125,17 @@ class QrRecorder {
         r_.q.insert(r_.q.end(), snap_.begin(), snap_.end());
     }
 
+    // Executions at one level with one timestamp are one market order.
     void record(const Ev& e) {
-        if (const int i = level(e.side, e.px))
-            push(e.kind, e.side == book::Side::Buy ? 0 : 1, i, e.shares);
+        const int i = level(e.side, e.px);
+        if (!i) return;
+        const int side = e.side == book::Side::Buy ? 0 : 1;
+        if (e.kind == 2 && !r_.ts.empty() && r_.kind.back() == 2 && r_.ts.back() == ts_ &&
+            r_.side.back() == side && r_.level.back() == i) {
+            r_.shares.back() += e.shares;
+            return;
+        }
+        push(e.kind, side, i, e.shares);
     }
 
     // Returns whether p_ref changed inside the window.

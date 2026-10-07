@@ -29,6 +29,9 @@ def truth():
     return L, C, M, init / init.sum(axis=1, keepdims=True), 0.55
 
 
+SIZE_L, SIZE_M = [0.6, 0.3, 0.1], [0.5, 0.3, 0.2]
+
+
 def test_recovers_rates_and_theta(py_build, ingest):
     sys.path.insert(0, py_build)
     import hftpy
@@ -37,14 +40,17 @@ def test_recovers_rates_and_theta(py_build, ingest):
     with tempfile.TemporaryDirectory() as d:
         raw, store = pathlib.Path(d) / "sim.itch", pathlib.Path(d) / "store"
         info = hftpy.qr_simulate(K, N, AES, 200_050, theta, L.ravel().tolist(), C.ravel().tolist(),
-                                 M.ravel().tolist(), init.ravel().tolist(), START, END, 21, str(raw))
+                                 M.ravel().tolist(), init.ravel().tolist(), START, END, 21, str(raw),
+                                 size_L=SIZE_L, size_M=SIZE_M)
         store.mkdir()
         with open(raw, "rb") as f:
             subprocess.run([ingest, str(store)], stdin=f, check=True, capture_output=True)
         loc = hftpy.symbols(str(store))["QRSIM"]
         ev = hftpy.qr_events(str(store), loc, K, 100, START, END)
-    fit = qr.calibrate(ev, K, N, tick=100)
-    assert fit["aes"] == AES
+    fit = qr.calibrate(ev, K, N, tick=100, aes=AES)
+    for k, want in (("size_L", SIZE_L), ("size_M", SIZE_M)):
+        n = fit["n_" + k].sum() / 2
+        assert np.all(np.abs(fit[k][:3] - want) < 4 * np.sqrt(np.array(want) / n)), (k, fit[k][:4])
     twice = qr.pool([fit, fit])
     seen = fit["n_L"] > 0
     assert np.allclose(twice["L"], fit["L"]) and np.allclose(twice["L_se"][seen] * np.sqrt(2), fit["L_se"][seen])

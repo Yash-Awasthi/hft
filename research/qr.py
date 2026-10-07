@@ -13,6 +13,8 @@ redraw distribution is the time-weighted distribution of n per level.
 
 import numpy as np
 
+SIZES = 20  # event sizes in AES units, the last bin holding everything larger
+
 
 def _accumulate(ev, K, N, aes, weighted):
     kind, side, level = ev["kind"], ev["side"].astype(int), ev["level"].astype(int)
@@ -36,7 +38,28 @@ def _accumulate(ev, K, N, aes, weighted):
         n_own = q[sel, side[sel] * K + level[sel] - 1]
         w = ev["shares"][sel] / aes if weighted else 1.0
         np.add.at(counts[name], (level[sel] - 1, n_own), w)
+        if name != "C":
+            units = np.clip(np.ceil(ev["shares"][sel] / aes), 1, SIZES).astype(int)
+            # A market order that empties its level may have wanted more: censored at its size.
+            cens = (name == "M") & (ev["shares"][sel] >= ev["q"][sel, side[sel] * K + level[sel] - 1])
+            counts["size_" + name] = np.bincount(units[~cens] - 1, minlength=SIZES).astype(float)
+            counts["cens_" + name] = np.bincount(units[cens] - 1, minlength=SIZES).astype(float)
     return time, time_m, counts, int(ev["episodes_moved"]), int(ev["episodes_refilled"]), float(dt.sum())
+
+
+def size_distribution(exact, censored):
+    """Kaplan-Meier estimate of P(size = k) from exact counts and counts known only to be at
+    least their size (censored[k - 1]: size >= k, so at risk through k - 1)."""
+    surv, p = 1.0, np.zeros(len(exact))
+    shifted = np.r_[censored[1:], 0.0]
+    at_risk = np.cumsum((exact + shifted)[::-1])[::-1]
+    for k in range(len(exact)):
+        h = exact[k] / at_risk[k] if at_risk[k] > 0 else 0.0
+        if k == len(exact) - 1:
+            h = 1.0
+        p[k] = surv * h
+        surv *= 1 - h
+    return p
 
 
 def calibrate(evs, K, N, tick=100, aes=None, weighted=False):
@@ -49,6 +72,8 @@ def calibrate(evs, K, N, tick=100, aes=None, weighted=False):
         aes = int(round(float(np.mean(sizes))))
     time, time_m = np.zeros((K, N + 1)), np.zeros((K, N + 1))
     counts = {k: np.zeros((K, N + 1)) for k in "LCM"}
+    for k in ("size_L", "size_M", "cens_L", "cens_M"):
+        counts[k] = np.zeros(SIZES)
     moved = refilled = 0
     seconds = 0.0
     for e in evs:
@@ -65,6 +90,9 @@ def calibrate(evs, K, N, tick=100, aes=None, weighted=False):
             se = np.where(t > 0, np.sqrt(np.maximum(counts[name], 1)) / t, 0.0)
         out[name], out[name + "_se"], out["time_" + name], out["n_" + name] = rate, se, t, counts[name]
     out["init"] = time / np.maximum(time.sum(axis=1, keepdims=True), 1e-300)
+    for k in ("L", "M"):
+        out["n_size_" + k], out["n_cens_" + k] = counts["size_" + k], counts["cens_" + k]
+        out["size_" + k] = size_distribution(counts["size_" + k], counts["cens_" + k])
     tot = max(moved + refilled, 1)
     out["theta"] = moved / tot
     out["theta_se"] = float(np.sqrt(out["theta"] * (1 - out["theta"]) / tot))
@@ -84,6 +112,10 @@ def pool(fits):
             out[name + "_se"] = np.where(t > 0, np.sqrt(np.maximum(n, 1)) / t, 0.0)
         out["n_" + name], out["time_" + name] = n, t
     out["init"] = out["time_L"] / np.maximum(out["time_L"].sum(axis=1, keepdims=True), 1e-300)
+    for k in ("L", "M"):
+        out["n_size_" + k] = sum(f["n_size_" + k] for f in fits)
+        out["n_cens_" + k] = sum(f["n_cens_" + k] for f in fits)
+        out["size_" + k] = size_distribution(out["n_size_" + k], out["n_cens_" + k])
     moved, refilled = sum(f["moved"] for f in fits), sum(f["refilled"] for f in fits)
     tot = max(moved + refilled, 1)
     out["theta"], out["theta_se"] = moved / tot, float(np.sqrt(moved / tot * (1 - moved / tot) / tot))
@@ -97,7 +129,7 @@ def half_tick(fit, inner_share=0.5):
     and market-order rates keep their dependence on the own queue size, theta is kept for a
     half-tick move, and redraws use the old level's distribution scaled by the share."""
     K, N = fit["K"], fit["N"]
-    out = {k: fit[k] for k in ("aes", "N", "theta")}
+    out = {k: fit[k] for k in ("aes", "N", "theta") + tuple(x for x in ("size_L", "size_M") if x in fit)}
     out["K"], out["tick"] = 2 * K, fit["tick"] // 2
     for name in "LCM":
         out[name] = np.repeat(fit[name], 2, axis=0)
@@ -130,4 +162,4 @@ def simulate_args(fit, p_ref, start_ns, end_ns, seed, path, fill_unvisited=True)
     init = fit["init"].ravel().tolist()
     return dict(K=K, N=N, aes=fit["aes"], p_ref=p_ref, theta=fit["theta"], L=tabs["L"], C=tabs["C"],
                 M=tabs["M"], init=init, start_ns=start_ns, end_ns=end_ns, seed=seed, path=str(path),
-                tick=fit["tick"])
+                tick=fit["tick"], size_L=list(fit.get("size_L", [])), size_M=list(fit.get("size_M", [])))

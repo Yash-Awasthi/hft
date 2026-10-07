@@ -4,10 +4,12 @@
 // written as ITCH 5.0 so the replay exchange and backtest run on it unchanged.
 //
 // State: K levels per side around a reference price p_ref (half a tick off the price grid),
-// level i at p_ref -/+ (i - 1/2) tick, each holding n_i orders of `aes` shares. Per level i and
-// queue size n: limit insertions at rate L_i(n), cancellations of one random order at C_i(n),
-// and market orders taking the front order at M_i(n) when level i is the best non-empty level
-// of its side; the same rates on both sides. When level 1 of a side empties, with probability
+// level i at p_ref -/+ (i - 1/2) tick, holding n_i units of `aes` shares. Per level i and queue
+// size n: limit insertions at rate L_i(n), cancellations of one random whole order at C_i(n),
+// and market orders taking from the front at M_i(n) when level i is the best non-empty level
+// of its side; the same rates on both sides. An insertion is one order of k units and a market
+// order takes k units (at most the level), k drawn from size_L / size_M (P(k) at index k - 1;
+// empty means one unit). When level 1 of a side empties, with probability
 // theta p_ref moves one tick towards it: the levels shift, the emptied price becomes the first
 // level of the other side and every new level is redrawn from `init` (level 1 conditioned on
 // at least one order); the level leaving the window is deleted.
@@ -32,6 +34,7 @@ struct QrParams {
     // Rates per second, index i * (N + 1) + n for level i = 0..K-1.
     std::vector<double> L, C, M;
     std::vector<double> init;  // redraw distribution, same indexing, rows sum to one
+    std::vector<double> size_L, size_M;
     std::uint64_t start_ns = 34'200'000'000'000ull, end_ns = 57'600'000'000'000ull;
 };
 
@@ -63,7 +66,7 @@ class QueueReactive {
     }
 
     std::uint32_t p_ref() const { return p_ref_; }
-    int queue(int side, int level) const { return static_cast<int>(q_[side][level].size()); }
+    int queue(int side, int level) const { return q_[side][level].units; }
     std::uint64_t events() const { return events_; }
     std::uint64_t moves() const { return moves_; }
 
@@ -79,11 +82,11 @@ class QueueReactive {
     }
     bool best(int s, int i) const {
         for (int j = 0; j < i; ++j)
-            if (!q_[s][j].empty()) return false;
+            if (q_[s][j].units) return false;
         return true;
     }
     double rate(int s, int i, int type) const {
-        const int n = static_cast<int>(q_[s][i].size());
+        const int n = std::min(q_[s][i].units, p_.N);
         if (type == 0) return n < p_.N ? p_.L[cell(i, n)] : 0.0;
         if (n == 0) return 0.0;
         if (type == 1) return p_.C[cell(i, n)];
@@ -93,17 +96,26 @@ class QueueReactive {
     BinaryFileWriter::Msg msg(std::vector<std::uint8_t>& out, char type) {
         return BinaryFileWriter::msg(out, type, 1, ts_);
     }
-    void add(int s, int i, std::vector<std::uint8_t>& out) {
+    int draw_size(const std::vector<double>& dist) {
+        if (dist.empty()) return 1;
+        double u = uniform();
+        std::size_t k = 0;
+        for (; k + 1 < dist.size() && u >= dist[k]; ++k) u -= dist[k];
+        return static_cast<int>(k) + 1;
+    }
+    void add(int s, int i, int units, std::vector<std::uint8_t>& out) {
         const std::uint64_t ref = next_ref_++;
-        msg(out, 'A').u64(ref).u8(s == 0 ? 'B' : 'S').u32(p_.aes).text("QRSIM", 8).u32(price(s, i));
-        q_[s][i].push_back(ref);
+        msg(out, 'A').u64(ref).u8(s == 0 ? 'B' : 'S').u32(p_.aes * static_cast<std::uint32_t>(units))
+            .text("QRSIM", 8).u32(price(s, i));
+        q_[s][i].orders.push_back({ref, units});
+        q_[s][i].units += units;
     }
     void refill(int s, int i, bool nonempty, std::vector<std::uint8_t>& out) {
         double u = uniform(), mass = 0;
         for (int n = nonempty ? 1 : 0; n <= p_.N; ++n) mass += p_.init[cell(i, n)];
         int n = nonempty ? 1 : 0;
         for (u *= mass; n < p_.N && u >= p_.init[cell(i, n)]; ++n) u -= p_.init[cell(i, n)];
-        for (int k = 0; k < n; ++k) add(s, i, out);
+        for (int k = 0; k < n; ++k) add(s, i, 1, out);
     }
 
     // Level 1 of side s emptied: with probability theta the reference moves one tick to it.
@@ -113,14 +125,14 @@ class QueueReactive {
         const int o = 1 - s, K = p_.K;
         // The new first level is written before the old last level is deleted, so a reader
         // sees the reference move with the first insertion and the deletions outside its window.
-        std::vector<std::uint64_t> leaving = std::move(q_[o][K - 1]);
+        Level leaving = std::move(q_[o][K - 1]);
         for (int i = K - 1; i > 0; --i) q_[o][i] = std::move(q_[o][i - 1]);
-        q_[o][0].clear();
+        q_[o][0] = {};
         for (int i = 0; i + 1 < K; ++i) q_[s][i] = std::move(q_[s][i + 1]);
-        q_[s][K - 1].clear();
+        q_[s][K - 1] = {};
         p_ref_ = s == 0 ? p_ref_ - p_.tick : p_ref_ + p_.tick;
         refill(o, 0, true, out);
-        for (const std::uint64_t ref : leaving) msg(out, 'D').u64(ref);
+        for (const Order& x : leaving.orders) msg(out, 'D').u64(x.ref);
         refill(s, K - 1, false, out);
     }
 
@@ -143,20 +155,26 @@ class QueueReactive {
             u -= r;
         }
         ++events_;
-        auto& lv = q_[s][i];
+        Level& lv = q_[s][i];
         if (t == 0) {
-            add(s, i, out);
+            add(s, i, std::min(draw_size(p_.size_L), std::max(p_.N - lv.units, 1)), out);
             return true;
         }
         if (t == 1) {
-            const auto k = static_cast<std::size_t>(uniform() * static_cast<double>(lv.size()));
-            msg(out, 'D').u64(lv[k]);
-            lv.erase(lv.begin() + static_cast<std::ptrdiff_t>(k));
+            const auto k = static_cast<std::size_t>(uniform() * static_cast<double>(lv.orders.size()));
+            msg(out, 'D').u64(lv.orders[k].ref);
+            lv.units -= lv.orders[k].units;
+            lv.orders.erase(lv.orders.begin() + static_cast<std::ptrdiff_t>(k));
         } else {
-            msg(out, 'E').u64(lv.front()).u32(p_.aes).u64(next_match_++);
-            lv.erase(lv.begin());
+            for (int want = std::min(draw_size(p_.size_M), lv.units); want > 0;) {
+                Order& f = lv.orders.front();
+                const int take = std::min(want, f.units);
+                msg(out, 'E').u64(f.ref).u32(p_.aes * static_cast<std::uint32_t>(take)).u64(next_match_++);
+                f.units -= take, lv.units -= take, want -= take;
+                if (!f.units) lv.orders.erase(lv.orders.begin());
+            }
         }
-        if (i == 0 && lv.empty()) depleted(s, out);
+        if (i == 0 && !lv.units) depleted(s, out);
         return true;
     }
 
@@ -164,7 +182,15 @@ class QueueReactive {
     rng::Stream rng_;
     std::uint32_t draw_ = 0;
     std::uint32_t p_ref_ = p_.p_ref;
-    std::vector<std::vector<std::uint64_t>> q_[2];
+    struct Order {
+        std::uint64_t ref;
+        int units;
+    };
+    struct Level {
+        std::vector<Order> orders;
+        int units = 0;
+    };
+    std::vector<Level> q_[2];
     std::uint64_t ts_ = 0, next_ref_ = 1, next_match_ = 1, events_ = 0, moves_ = 0;
 };
 

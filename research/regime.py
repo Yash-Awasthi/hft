@@ -116,6 +116,25 @@ def spread_b(spread0, eta0, tick0, factor, beta):
     return max(tick, spread0)
 
 
+def weights(errors):
+    """Combination weights from each method's held-out error at the current tick (inverse
+    squared); a method without a held-out score gets no weight."""
+    inv = {k: (1 / e ** 2 if e else 0.0) for k, e in errors.items()}
+    tot = sum(inv.values())
+    return {k: v / tot for k, v in inv.items()}
+
+
+def combine(changes, w, bands):
+    """Weighted log change; the band spans every method's estimate and band, and the methods
+    disagree when their estimates differ in sign or by more than a factor of 1.5."""
+    vals = [v for v in changes.values() if v is not None and np.isfinite(v)]
+    comb = sum(w.get(k, 0) * v for k, v in changes.items() if v is not None and np.isfinite(v))
+    comb /= max(sum(w.get(k, 0) for k, v in changes.items() if v is not None and np.isfinite(v)), 1e-12)
+    pts = vals + [x for b in bands.values() for x in b]
+    disagree = (min(vals) < 0 < max(vals)) or (max(vals) - min(vals) > np.log(1.5))
+    return float(comb), float(min(pts)), float(max(pts)), bool(disagree)
+
+
 def bootstrap_change(df, target, log_factor, rows, n=200, seed=1):
     """Percentile band of the predicted change for `rows`, refitting on resampled stocks."""
     rng = np.random.default_rng(seed)

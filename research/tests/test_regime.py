@@ -49,6 +49,14 @@ def test_method_b_eta_and_spread():
     assert np.isclose(regime.spread_b(0.03, 0.7, 0.01, 5.0, 1.0), 0.05)
 
 
+def test_combination_weights_by_inverse_squared_error_and_flags_disagreement():
+    w = regime.weights({"a": 0.1, "b": 0.2, "c": None})
+    assert np.isclose(w["a"], 0.8) and np.isclose(w["b"], 0.2) and w["c"] == 0.0
+    comb, lo, hi, disagree = regime.combine({"a": np.log(0.9), "b": np.log(0.5)}, w, {"a": (np.log(0.85), np.log(0.95))})
+    assert np.isclose(comb, 0.8 * np.log(0.9) + 0.2 * np.log(0.5))
+    assert np.isclose(lo, np.log(0.5)) and np.isclose(hi, np.log(0.95)) and disagree
+
+
 if __name__ == "__main__":
     for name, f in list(globals().items()):
         if name.startswith("test_"):

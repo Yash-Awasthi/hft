@@ -24,6 +24,7 @@
 #include "strategy/lifecycles.hpp"
 #include "strategy/multi_features.hpp"
 #include "strategy/qr_events.hpp"
+#include "strategy/trades.hpp"
 #include "sources/queue_reactive.hpp"
 
 namespace nb = nanobind;
@@ -444,10 +445,12 @@ nb::dict qr_events(const std::string& store, std::uint16_t locate, int K, std::u
 nb::dict qr_simulate(int K, int N, std::uint32_t aes, std::uint32_t p_ref, double theta,
                      std::vector<double> L, std::vector<double> C, std::vector<double> M,
                      std::vector<double> init, std::uint64_t start_ns, std::uint64_t end_ns,
-                     std::uint64_t seed, const std::string& path, std::uint32_t tick) {
+                     std::uint64_t seed, const std::string& path, std::uint32_t tick,
+                     std::vector<double> size_L, std::vector<double> size_M) {
     sources::QrParams p;
     p.K = K, p.N = N, p.aes = aes, p.tick = tick, p.p_ref = p_ref, p.theta = theta;
     p.L = std::move(L), p.C = std::move(C), p.M = std::move(M), p.init = std::move(init);
+    p.size_L = std::move(size_L), p.size_M = std::move(size_M);
     p.start_ns = start_ns, p.end_ns = end_ns;
     sources::QueueReactive sim(std::move(p), seed);
     std::vector<std::uint8_t> raw;
@@ -461,6 +464,32 @@ nb::dict qr_simulate(int K, int N, std::uint32_t aes, std::uint32_t p_ref, doubl
     d["events"] = sim.events();
     d["moves"] = sim.moves();
     d["bytes"] = raw.size();
+    return d;
+}
+
+// Signed trades and executions of one symbol (strategy/trades.hpp).
+nb::dict trades(const std::string& store, std::uint16_t locate, std::uint64_t start_ns,
+                std::uint64_t end_ns) {
+    strategy::TradeRecorder rec(start_ns, end_ns);
+    {
+        nb::gil_scoped_release release;
+        rec.run(store, locate);
+    }
+    strategy::TradeRecord r = rec.record();
+    const std::size_t n = r.ts.size(), m = r.exec_ts.size();
+    nb::dict d, e;
+    d["ts"] = array(std::move(r.ts), n);
+    d["sign"] = array(std::move(r.sign), n);
+    d["shares"] = array(std::move(r.shares), n);
+    d["notional"] = array(std::move(r.notional), n);
+    d["mid_before"] = array(std::move(r.mid_before), n);
+    d["mid_after"] = array(std::move(r.mid_after), n);
+    e["ts"] = array(std::move(r.exec_ts), m);
+    e["sign"] = array(std::move(r.exec_sign), m);
+    e["shares"] = array(std::move(r.exec_shares), m);
+    e["mpid"] = array(std::move(r.exec_mpid), m);
+    e["hidden"] = array(std::move(r.exec_hidden), m);
+    d["executions"] = e;
     return d;
 }
 
@@ -478,11 +507,13 @@ NB_MODULE(hftpy, m) {
           nb::arg("start_ns"), nb::arg("end_ns"));
     m.def("backtest", &backtest_run, nb::arg("store"), nb::arg("target"), nb::arg("index"),
           nb::arg("strategy"), nb::arg("params"), nb::arg("config"));
+    m.def("trades", &trades, nb::arg("store"), nb::arg("locate"), nb::arg("start_ns"), nb::arg("end_ns"));
     m.def("qr_events", &qr_events, nb::arg("store"), nb::arg("locate"), nb::arg("K"),
           nb::arg("tick"), nb::arg("start_ns"), nb::arg("end_ns"));
     m.def("qr_simulate", &qr_simulate, nb::arg("K"), nb::arg("N"), nb::arg("aes"), nb::arg("p_ref"),
           nb::arg("theta"), nb::arg("L"), nb::arg("C"), nb::arg("M"), nb::arg("init"),
-          nb::arg("start_ns"), nb::arg("end_ns"), nb::arg("seed"), nb::arg("path"), nb::arg("tick") = 100);
+          nb::arg("start_ns"), nb::arg("end_ns"), nb::arg("seed"), nb::arg("path"), nb::arg("tick") = 100,
+          nb::arg("size_L") = std::vector<double>{}, nb::arg("size_M") = std::vector<double>{});
     m.attr("lifecycle_covariates") =
         nb::make_tuple("queue_ahead", "opposite_qty", "imbalance", "spread_ticks", "volatility",
                        "ofi_signal", "shares");
