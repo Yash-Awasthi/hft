@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "backtest/backtest.hpp"
+#include "backtest/intensity.hpp"
 #include "core/philox.hpp"
 
 namespace hft::backtest {
@@ -94,10 +95,13 @@ namespace hft::backtest {
 // r = m - q gamma sigma^2 (T - t) and distance d = ln(1 + gamma/k)/gamma + gamma sigma^2 (T - t)/2;
 // with `glft` the Gueant-Lehalle-Fernandez-Tapia asymptotic quotes for bounded inventory
 // replace them. sigma^2 (ticks^2 per second) is an EWMA of squared mid changes over time; A
-// and k (fill intensity A exp(-k d), per second and per tick) come from the fill model.
+// and k (fill intensity A exp(-k d), per second and per tick) come from the fill model, and
+// with `online` are refitted after each of our fills from the exposure and fills by distance.
 struct AvellanedaStoikov {
     double gamma = 0.1, A = 1.0, k = 1.5;
     bool glft = true;
+    bool online = false;
+    double online_tau_s = 600, online_prior_s = 60;
     std::uint32_t size = 100;
     std::int64_t max_inventory = 500;
     std::uint64_t end_ns = 57'600'000'000'000;
@@ -106,8 +110,29 @@ struct AvellanedaStoikov {
 
     double var = 0.0, last_mid = NAN;
     std::uint64_t last_ts = 0;
+    IntensityEstimator est;
+    double bid_dist = NAN, ask_dist = NAN;  // ticks from the mid of the last quotes, NaN if none
+    std::int64_t last_inv = 0;
+    std::uint64_t last_decide = 0;
+
+    // Our fills show as inventory changes, credited to the distance of the side's last quote.
+    void recalibrate(const View& v) {
+        if (!last_decide) est = IntensityEstimator(A, k, online_tau_s, online_prior_s);
+        const double dt = last_decide && v.now > last_decide ? (v.now - last_decide) * 1e-9 : 0;
+        est.decay(dt);
+        if (std::isfinite(bid_dist)) est.expose(bid_dist, dt);
+        if (std::isfinite(ask_dist)) est.expose(ask_dist, dt);
+        const std::int64_t dq = v.inventory - last_inv;
+        const double lots = static_cast<double>(dq < 0 ? -dq : dq) / size;
+        if (dq > 0 && std::isfinite(bid_dist)) est.fill(bid_dist, lots);
+        if (dq < 0 && std::isfinite(ask_dist)) est.fill(ask_dist, lots);
+        if (dq) est.fit(), A = est.A(), k = est.k();
+        last_inv = v.inventory, last_decide = v.now;
+        bid_dist = ask_dist = NAN;
+    }
 
     void decide(const View& v, Desired& d) {
+        if (online) recalibrate(v);
         if (!std::isfinite(v.mid)) return;
         if (std::isfinite(last_mid) && v.now > last_ts) {
             const double dt = (v.now - last_ts) * 1e-9;
@@ -139,8 +164,10 @@ struct AvellanedaStoikov {
             static_cast<std::uint32_t>(std::max(bid, 1.0)) * tick, b.ask_px - tick);
         const std::uint32_t apx = std::max<std::uint32_t>(
             static_cast<std::uint32_t>(std::max(ask, 1.0)) * tick, b.bid_px + tick);
-        if (v.inventory < max_inventory) d.bid_px = bpx, d.bid_qty = size;
-        if (v.inventory > -max_inventory) d.ask_px = apx, d.ask_qty = size;
+        if (v.inventory < max_inventory)
+            d.bid_px = bpx, d.bid_qty = size, bid_dist = v.mid - static_cast<double>(bpx) / tick;
+        if (v.inventory > -max_inventory)
+            d.ask_px = apx, d.ask_qty = size, ask_dist = static_cast<double>(apx) / tick - v.mid;
     }
 };
 

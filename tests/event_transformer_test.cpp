@@ -67,6 +67,19 @@ TEST(EventTransformer, MatchesPyTorchAndAgreesOnDecisions) {
     }
 }
 
+// The in-loop forecast path skips the generator head and gives the same forecasts.
+TEST(EventTransformer, ForecastOnlyStepMatchesTheFullStep) {
+    const Golden g;
+    const EventTransformer m(HFT_SOURCE_DIR "/tests/data/evt_weights.bin");
+    const auto full = run<true>(m, g.tokens);
+    auto s = m.state();
+    float f[6];
+    for (std::size_t e = 0; e < g.tokens.size(); ++e) {
+        m.step<true>(s, g.tokens[e], f, nullptr);
+        ASSERT_EQ(std::memcmp(f, full.data() + e * (6 + EventTransformer::kGen), sizeof f), 0) << e;
+    }
+}
+
 TEST(EventTransformer, BitIdenticalAcrossRuns) {
     const Golden g;
     const EventTransformer m(HFT_SOURCE_DIR "/tests/data/evt_weights.bin");

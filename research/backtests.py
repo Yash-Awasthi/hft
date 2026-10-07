@@ -40,6 +40,8 @@ def strategy_spec(name, group):
         "foresight": ("perfect_foresight", {"horizon_ns": 1e9, "cost_ticks": 0.3}),
         "as": ("avellaneda_stoikov", {"gamma": 0.05, "A": as_A, "k": as_k, "glft": 1,
                                       "size": 100, "max_inventory": 500, "hysteresis_ticks": 1}),
+        "as_online": ("avellaneda_stoikov", {"gamma": 0.05, "A": as_A, "k": as_k, "glft": 1, "online": 1,
+                                             "size": 100, "max_inventory": 500, "hysteresis_ticks": 1}),
         "dp": (f"dp:{POLICIES / f'dp_{group}_nosignal.bin'}", {}),
         "dp_signal": (f"dp:{POLICIES / f'dp_{group}_signal.bin'}", {}),
         "ext": (ext, {"vol_limit": vol, "toxicity": 1, "taking": 1}),

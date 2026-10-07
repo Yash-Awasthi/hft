@@ -104,6 +104,28 @@ TEST(Strategies, AvellanedaStoikovSkewsAgainstInventory) {
     EXPECT_LE(flat.ask_px, 10'0500u + 1000u);
 }
 
+// A bid fill after 10 s of quoting raises the fitted intensity; without `online` A, k stay.
+TEST(Strategies, AvellanedaStoikovRecalibratesOnItsFills) {
+    book::TickBook<> b;
+    b.add(1, Side::Buy, 100, 10'0000, 1);
+    b.add(2, Side::Sell, 100, 10'0500, 2);
+    std::vector<Working> w;
+    for (const bool online : {false, true}) {
+        AvellanedaStoikov as;
+        as.A = 0.01, as.k = 1.5, as.online = online, as.online_prior_s = 1;
+        Desired d1, d2;
+        as.decide(View{1'000'000'000, b, nullptr, 0, 1002.5, 0, w, true}, d1);
+        ASSERT_GT(d1.bid_qty, 0u);
+        as.decide(View{11'000'000'000, b, nullptr, 0, 1002.5, 100, w, true}, d2);
+        if (online) {
+            EXPECT_GT(as.A * std::exp(-as.k * 2.5), 0.01 * std::exp(-1.5 * 2.5));
+        } else {
+            EXPECT_EQ(as.A, 0.01);
+            EXPECT_EQ(as.k, 1.5);
+        }
+    }
+}
+
 // In-flight takes count against the position limit until their reports come back.
 TEST(Backtest, PositionLimitHoldsWithTakesInFlight) {
     FixtureStore fx;

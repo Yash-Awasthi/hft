@@ -92,7 +92,7 @@ class EventTransformer {
     int forecasts() const { return nf_; }
     std::size_t weight_bytes() const { return n_ * 4; }
 
-    // One event: forecast logits (forecasts()) and generator logits (kGen).
+    // One event: forecast logits (forecasts()) and generator logits (kGen; skipped if gen is null).
     template <bool Avx>
     void step(State& s, const EventToken& t, float* forecast, float* gen) const {
         const int d = d_;
@@ -148,7 +148,7 @@ class EventTransformer {
         }
         rmsnorm(h, norm_, x, d);
         mv<Avx>(fh_, x, forecast);
-        mv<Avx>(gh_, x, gen);
+        if (gen) mv<Avx>(gh_, x, gen);
         ++s.pos;
     }
 
