@@ -1,7 +1,7 @@
 include(GoogleTest)
 
 add_executable(hft_tests endian_test.cpp itch_test.cpp store_test.cpp gzip_test.cpp book_test.cpp
-                         book_prop_test.cpp timing_test.cpp)
+                         book_prop_test.cpp timing_test.cpp philox_test.cpp)
 target_link_libraries(hft_tests PRIVATE hft_core hft_data GTest::gtest_main rapidcheck tlx)
 gtest_discover_tests(hft_tests)
 # RapidCheck instantiates the deprecated std::aligned_storage in user translation units.
