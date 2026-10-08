@@ -14,11 +14,11 @@ using namespace hft::data;
 namespace {
 
 // Writes 3 interleaved symbols and checks each reads back complete and in order.
-void roundtrip(std::size_t budget, std::uint32_t chunk_msgs) {
+void roundtrip(std::size_t budget, std::uint32_t chunk_msgs, Codec codec = Codec::Zstd) {
     TempDir dir("store");
     std::map<std::uint16_t, std::vector<std::pair<std::uint64_t, std::string>>> want;
     {
-        StoreWriter w(dir.path, budget, chunk_msgs);
+        StoreWriter w(dir.path, budget, chunk_msgs, codec);
         for (std::uint64_t seq = 0; seq < 100; ++seq) {
             const auto locate = static_cast<std::uint16_t>(seq % 3 == 0   ? 7
                                                            : seq % 3 == 1 ? 8
@@ -31,6 +31,8 @@ void roundtrip(std::size_t budget, std::uint32_t chunk_msgs) {
         w.finish();
         EXPECT_GT(w.compressed_bytes(), 0u);
     }
+    EXPECT_EQ(std::filesystem::exists(dir.path / "00007.lz4"), codec == Codec::Lz4);
+    EXPECT_EQ(std::filesystem::exists(dir.path / "00007.zst"), codec == Codec::Zstd);
     for (const auto& [locate, records] : want) {
         SymbolReader r(dir.path, locate);
         Record rec{};
@@ -50,6 +52,12 @@ TEST(Store, RoundtripSingleChunk) { roundtrip(1 << 20, 1000); }
 TEST(Store, RoundtripSmallChunks) { roundtrip(1 << 20, 4); }
 
 TEST(Store, RoundtripTinyBudgetForcesFlushes) { roundtrip(64, 1000); }
+
+TEST(Store, Lz4RoundtripSingleChunk) { roundtrip(1 << 20, 1000, Codec::Lz4); }
+
+TEST(Store, Lz4RoundtripSmallChunks) { roundtrip(1 << 20, 4, Codec::Lz4); }
+
+TEST(Store, Lz4RoundtripTinyBudgetForcesFlushes) { roundtrip(64, 1000, Codec::Lz4); }
 
 TEST(Store, IndexRecordsChunkBounds) {
     TempDir dir("store");

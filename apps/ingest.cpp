@@ -1,10 +1,11 @@
-// Splits a BinaryFILE ITCH stream into the per-symbol zstd store.
+// Splits a BinaryFILE ITCH stream into the per-symbol store (LZ4-HC chunks, or zstd with --codec zstd).
 // Usage: ingest <empty-output-dir> [day.gz]
 // With a .gz argument the file is decompressed in-process, the gzip CRC is verified and the
 // SHA-256 of the compressed file is recorded in <output-dir>/source.sha256. Without it the
 // raw stream is read from stdin.
 
 #include <cstdio>
+#include <algorithm>
 #include <cstring>
 #include <exception>
 #include <filesystem>
@@ -37,7 +38,7 @@ struct SymbolMap {
     }
 };
 
-int run(const std::filesystem::path& out, const char* gz_path) {
+int run(const std::filesystem::path& out, const char* gz_path, hft::data::Codec codec) {
     using namespace hft::itch;
     std::filesystem::create_directories(out);
     if (!std::filesystem::is_empty(out)) {
@@ -56,7 +57,7 @@ int run(const std::filesystem::path& out, const char* gz_path) {
         read_chunk = [](std::uint8_t* p, std::size_t n) { return std::fread(p, 1, n, stdin); };
     }
 
-    hft::data::StoreWriter writer(out, kBudget, kChunkMsgs);
+    hft::data::StoreWriter writer(out, kBudget, kChunkMsgs, codec);
     SymbolMap symbols;
     std::vector<std::uint8_t> buf(kChunk + 2 + 65535);
     std::size_t have = 0;
@@ -103,12 +104,24 @@ int run(const std::filesystem::path& out, const char* gz_path) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc < 2 || argc > 3) {
-        std::fprintf(stderr, "usage: ingest <output-dir> [day.gz]\n");
+    hft::data::Codec codec = hft::data::Codec::Lz4;
+    std::vector<const char*> args;
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--codec") == 0 && i + 1 < argc) {
+            const char* c = argv[++i];
+            if (std::strcmp(c, "zstd") == 0) codec = hft::data::Codec::Zstd;
+            else if (std::strcmp(c, "lz4") == 0) codec = hft::data::Codec::Lz4;
+            else args.push_back(nullptr);  // rejected below
+        } else {
+            args.push_back(argv[i]);
+        }
+    }
+    if (args.empty() || args.size() > 2 || std::find(args.begin(), args.end(), nullptr) != args.end()) {
+        std::fprintf(stderr, "usage: ingest <output-dir> [day.gz] [--codec lz4|zstd]\n");
         return 2;
     }
     try {
-        return run(argv[1], argc == 3 ? argv[2] : nullptr);
+        return run(args[0], args.size() == 2 ? args[1] : nullptr, codec);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "ingest failed: %s\n", e.what());
         return 1;

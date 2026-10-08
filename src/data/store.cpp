@@ -1,5 +1,7 @@
 #include "data/store.hpp"
 
+#include <lz4.h>
+#include <lz4hc.h>
 #include <zstd.h>
 
 #include <algorithm>
@@ -16,7 +18,8 @@ namespace hft::data {
 namespace {
 
 constexpr std::size_t kLocates = 65536;
-constexpr int kLevel = 3;
+constexpr int kLevel = 3;      // zstd
+constexpr int kLz4Level = 9;   // LZ4-HC: 2.9x on ITCH against 2.2x for plain LZ4
 constexpr std::size_t kRecordHeader = 10;  // u64 seq + u16 len
 
 std::filesystem::path path_for(const std::filesystem::path& dir, std::uint16_t locate,
@@ -43,8 +46,18 @@ std::vector<IndexEntry> read_index(const std::filesystem::path& dir, std::uint16
     return out;
 }
 
+struct ChunkFile {
+    std::filesystem::path path;
+    Codec codec;
+};
+ChunkFile chunk_file(const std::filesystem::path& dir, std::uint16_t locate) {
+    const auto lz4 = path_for(dir, locate, ".lz4");
+    if (std::filesystem::exists(lz4)) return {lz4, Codec::Lz4};
+    return {path_for(dir, locate, ".zst"), Codec::Zstd};
+}
+
 // Reads and decompresses one chunk into `raw`; `comp` is scratch.
-void read_chunk(const std::filesystem::path& zst_path, const IndexEntry& e,
+void read_chunk(const std::filesystem::path& zst_path, Codec codec, const IndexEntry& e,
                 std::vector<std::uint8_t>& comp, std::vector<std::uint8_t>& raw) {
     comp.resize(e.comp_size);
     // Opened per chunk: a merge holds thousands of readers, more than the fd limit.
@@ -53,6 +66,14 @@ void read_chunk(const std::filesystem::path& zst_path, const IndexEntry& e,
     zst.read(reinterpret_cast<char*>(comp.data()), e.comp_size);
     if (!zst) throw std::runtime_error("short read on chunk");
     raw.resize(e.raw_size);
+    if (codec == Codec::Lz4) {
+        const int n = LZ4_decompress_safe(reinterpret_cast<const char*>(comp.data()),
+                                          reinterpret_cast<char*>(raw.data()),
+                                          static_cast<int>(comp.size()), static_cast<int>(raw.size()));
+        if (n < 0 || static_cast<std::uint32_t>(n) != e.raw_size)
+            throw std::runtime_error("corrupt chunk");
+        return;
+    }
     const std::size_t n = ZSTD_decompress(raw.data(), raw.size(), comp.data(), comp.size());
     if (ZSTD_isError(n) || n != e.raw_size) throw std::runtime_error("corrupt chunk");
 }
@@ -72,10 +93,11 @@ bool parse_record(const std::vector<std::uint8_t>& raw, std::size_t pos, Record&
 }  // namespace
 
 StoreWriter::StoreWriter(std::filesystem::path dir, std::size_t budget_bytes,
-                         std::uint32_t chunk_msgs)
+                         std::uint32_t chunk_msgs, Codec codec)
     : dir_(std::move(dir)),
       budget_(budget_bytes),
       chunk_msgs_(chunk_msgs),
+      codec_(codec),
       bufs_(kLocates),
       offset_(kLocates, 0) {}
 
@@ -119,10 +141,20 @@ void StoreWriter::flush(std::uint16_t locate) {
     Buf& b = bufs_[locate];
     if (b.n == 0) return;
 
-    scratch_.resize(ZSTD_compressBound(b.raw.size()));
-    const std::size_t csize =
-        ZSTD_compress(scratch_.data(), scratch_.size(), b.raw.data(), b.raw.size(), kLevel);
-    if (ZSTD_isError(csize)) throw std::runtime_error(ZSTD_getErrorName(csize));
+    std::size_t csize;
+    if (codec_ == Codec::Lz4) {
+        scratch_.resize(static_cast<std::size_t>(LZ4_compressBound(static_cast<int>(b.raw.size()))));
+        const int n = LZ4_compress_HC(reinterpret_cast<const char*>(b.raw.data()),
+                                      reinterpret_cast<char*>(scratch_.data()),
+                                      static_cast<int>(b.raw.size()), static_cast<int>(scratch_.size()),
+                                      kLz4Level);
+        if (n <= 0) throw std::runtime_error("lz4 compress failed");
+        csize = static_cast<std::size_t>(n);
+    } else {
+        scratch_.resize(ZSTD_compressBound(b.raw.size()));
+        csize = ZSTD_compress(scratch_.data(), scratch_.size(), b.raw.data(), b.raw.size(), kLevel);
+        if (ZSTD_isError(csize)) throw std::runtime_error(ZSTD_getErrorName(csize));
+    }
 
     const IndexEntry e{offset_[locate],
                        static_cast<std::uint32_t>(csize),
@@ -131,7 +163,7 @@ void StoreWriter::flush(std::uint16_t locate) {
                        0,
                        b.first_ts,
                        b.first_seq};
-    append_file(path_for(dir_, locate, ".zst"), scratch_.data(), csize);
+    append_file(path_for(dir_, locate, codec_ == Codec::Lz4 ? ".lz4" : ".zst"), scratch_.data(), csize);
     append_file(path_for(dir_, locate, ".idx"), &e, sizeof e);
 
     offset_[locate] += csize;
@@ -147,11 +179,15 @@ void StoreWriter::finish() {
 }
 
 SymbolReader::SymbolReader(const std::filesystem::path& dir, std::uint16_t locate)
-    : idx_(read_index(dir, locate)), zst_path_(path_for(dir, locate, ".zst")) {}
+    : idx_(read_index(dir, locate)) {
+    const ChunkFile f = chunk_file(dir, locate);
+    data_path_ = f.path;
+    codec_ = f.codec;
+}
 
 void SymbolReader::load(std::size_t chunk) {
     std::vector<std::uint8_t> comp;
-    read_chunk(zst_path_, idx_[chunk], comp, raw_);
+    read_chunk(data_path_, codec_, idx_[chunk], comp, raw_);
     pos_ = 0;
 }
 
@@ -174,7 +210,8 @@ MergedReader::MergedReader(const std::filesystem::path& dir, std::vector<std::ui
         const auto sym = static_cast<std::uint32_t>(syms_.size());
         for (const IndexEntry& e : idx) order_.push_back({e.first_seq, sym, e});
         heap_.push_back({idx[0].first_seq, sym});
-        syms_.push_back(Sym{loc, path_for(dir, loc, ".zst"), idx, {}, 0, 0});
+        const ChunkFile f = chunk_file(dir, loc);
+        syms_.push_back(Sym{loc, f.path, f.codec, idx, {}, 0, 0});
     }
     std::sort(order_.begin(), order_.end(),
               [](const Pending& a, const Pending& b) { return a.first_seq < b.first_seq; });
@@ -211,7 +248,7 @@ void MergedReader::run() {
                 }
             }
             const Pending& p = order_[k];
-            read_chunk(syms_[p.sym].zst_path, p.entry, comp, raw);
+            read_chunk(syms_[p.sym].data_path, syms_[p.sym].codec, p.entry, comp, raw);
             std::lock_guard lock(mu_);
             Ready& r = ready_[k - popped_];
             r.raw = std::move(raw);
