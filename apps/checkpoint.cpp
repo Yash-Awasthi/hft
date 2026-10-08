@@ -12,6 +12,7 @@
 #include <zstd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -19,6 +20,7 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "book/itch_apply.hpp"
@@ -158,16 +160,31 @@ int main(int argc, char** argv) {
                     static_cast<std::uint16_t>(std::stoul(en.path().stem().string())));
     std::sort(locates.begin(), locates.end());
 
+    // Symbols have their own files and books, so they run on a pool (THREADS, default all
+    // hardware threads); the report is still in locate order.
+    const char* te = std::getenv("THREADS");
+    const unsigned threads =
+        te ? static_cast<unsigned>(std::strtoul(te, nullptr, 10)) : std::thread::hardware_concurrency();
+    std::vector<std::uint64_t> counts(locates.size());
+    std::atomic<std::size_t> next{0};
+    auto worker = [&] {
+        for (std::size_t k; (k = next.fetch_add(1)) < locates.size();)
+            counts[k] = check ? verify(dir, locates[k]) : write(dir, locates[k], every);
+    };
+    std::vector<std::thread> pool;
+    for (unsigned t = 1; t < std::max(threads, 1u); ++t) pool.emplace_back(worker);
+    worker();
+    for (auto& t : pool) t.join();
+
     std::uint64_t total = 0, bad = 0;
-    for (std::uint16_t loc : locates) {
+    for (std::size_t k = 0; k < locates.size(); ++k) {
         if (check) {
-            const std::uint64_t b = verify(dir, loc);
-            if (b)
-                std::printf("locate %u: %llu checkpoints differ\n", loc,
-                            static_cast<unsigned long long>(b));
-            bad += b;
+            if (counts[k])
+                std::printf("locate %u: %llu checkpoints differ\n", locates[k],
+                            static_cast<unsigned long long>(counts[k]));
+            bad += counts[k];
         } else {
-            total += write(dir, loc, every);
+            total += counts[k];
         }
     }
     if (check)
