@@ -90,7 +90,49 @@ bool parse_record(const std::vector<std::uint8_t>& raw, std::size_t pos, Record&
     return true;
 }
 
+
+// Compresses `raw` into `out` (resized to fit) and returns the compressed size.
+std::size_t compress_chunk(Codec codec, const std::vector<std::uint8_t>& raw,
+                           std::vector<std::uint8_t>& out) {
+    if (codec == Codec::Lz4) {
+        out.resize(static_cast<std::size_t>(LZ4_compressBound(static_cast<int>(raw.size()))));
+        const int n = LZ4_compress_HC(reinterpret_cast<const char*>(raw.data()),
+                                      reinterpret_cast<char*>(out.data()), static_cast<int>(raw.size()),
+                                      static_cast<int>(out.size()), kLz4Level);
+        if (n <= 0) throw std::runtime_error("lz4 compress failed");
+        return static_cast<std::size_t>(n);
+    }
+    out.resize(ZSTD_compressBound(raw.size()));
+    const std::size_t n = ZSTD_compress(out.data(), out.size(), raw.data(), raw.size(), kLevel);
+    if (ZSTD_isError(n)) throw std::runtime_error(ZSTD_getErrorName(n));
+    return n;
+}
+
 }  // namespace
+
+std::uint64_t transcode_symbol(const std::filesystem::path& src, const std::filesystem::path& dst,
+                               std::uint16_t locate, Codec codec) {
+    const std::vector<IndexEntry> idx = read_index(src, locate);
+    const ChunkFile in = chunk_file(src, locate);
+    const auto out_path = path_for(dst, locate, codec == Codec::Lz4 ? ".lz4" : ".zst");
+    std::ofstream out(out_path, std::ios::binary | std::ios::trunc);
+    std::ofstream out_idx(path_for(dst, locate, ".idx"), std::ios::binary | std::ios::trunc);
+    std::vector<std::uint8_t> comp, raw, packed;
+    std::uint64_t offset = 0;
+    for (const IndexEntry& e : idx) {
+        read_chunk(in.path, in.codec, e, comp, raw);
+        const std::size_t n = compress_chunk(codec, raw, packed);
+        IndexEntry o = e;
+        o.offset = offset;
+        o.comp_size = static_cast<std::uint32_t>(n);
+        out.write(reinterpret_cast<const char*>(packed.data()), static_cast<std::streamsize>(n));
+        out_idx.write(reinterpret_cast<const char*>(&o), sizeof o);
+        offset += n;
+    }
+    if (!out || !out_idx) throw std::runtime_error("write failed: " + out_path.string());
+    return offset;
+}
+
 
 StoreWriter::StoreWriter(std::filesystem::path dir, std::size_t budget_bytes,
                          std::uint32_t chunk_msgs, Codec codec)
@@ -141,20 +183,7 @@ void StoreWriter::flush(std::uint16_t locate) {
     Buf& b = bufs_[locate];
     if (b.n == 0) return;
 
-    std::size_t csize;
-    if (codec_ == Codec::Lz4) {
-        scratch_.resize(static_cast<std::size_t>(LZ4_compressBound(static_cast<int>(b.raw.size()))));
-        const int n = LZ4_compress_HC(reinterpret_cast<const char*>(b.raw.data()),
-                                      reinterpret_cast<char*>(scratch_.data()),
-                                      static_cast<int>(b.raw.size()), static_cast<int>(scratch_.size()),
-                                      kLz4Level);
-        if (n <= 0) throw std::runtime_error("lz4 compress failed");
-        csize = static_cast<std::size_t>(n);
-    } else {
-        scratch_.resize(ZSTD_compressBound(b.raw.size()));
-        csize = ZSTD_compress(scratch_.data(), scratch_.size(), b.raw.data(), b.raw.size(), kLevel);
-        if (ZSTD_isError(csize)) throw std::runtime_error(ZSTD_getErrorName(csize));
-    }
+    const std::size_t csize = compress_chunk(codec_, b.raw, scratch_);
 
     const IndexEntry e{offset_[locate],
                        static_cast<std::uint32_t>(csize),

@@ -82,6 +82,12 @@ struct Record {
     std::uint16_t len;
 };
 
+// Rewrites one symbol of the store in `src` into `dst` with `codec`, keeping the chunk
+// boundaries and index fields so checkpoints and sequence ranges stay valid. Returns the
+// compressed bytes written.
+std::uint64_t transcode_symbol(const std::filesystem::path& src, const std::filesystem::path& dst,
+                               std::uint16_t locate, Codec codec);
+
 class SymbolReader {
    public:
     SymbolReader(const std::filesystem::path& dir, std::uint16_t locate);
