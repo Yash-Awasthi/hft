@@ -16,6 +16,7 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -24,6 +25,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include "book/btree_book.hpp"
@@ -387,9 +389,58 @@ void replay_run(const std::filesystem::path& dir, const std::vector<std::uint16_
         }
         for (auto& a : ap) errors += a.stats.errors;
         const double s = secs(t0, std::chrono::steady_clock::now());
+        if (r > 0) std::fprintf(stderr, "bbo_sum %llu\n", (unsigned long long)bbo);
         if (r > 0)
             std::printf("replay,%s,%d,%llu,%.0f,,,,,%llu\n", variant.c_str(), r,
                         (unsigned long long)n, s * 1e9, (unsigned long long)errors + (bbo & 0));
+    }
+}
+
+// The same replay one symbol at a time: books are independent, so each worker takes the next
+// symbol (busiest first), reads only that symbol's stream and applies it to a private book.
+// No merge, and one book's working set stays in cache. The BBO sum equals the merged replay's.
+void replay_sym(const std::filesystem::path& dir, const std::vector<std::uint16_t>& locs, int reps,
+                unsigned threads) {
+    using Tick = book::TickBook<book::LinearMap>;
+    std::vector<std::pair<std::uint64_t, std::uint16_t>> order;
+    for (const std::uint16_t loc : locs) {
+        std::uint64_t msgs = 0;
+        for (const auto& c : data::SymbolReader(dir, loc).index()) msgs += c.n_msgs;
+        order.emplace_back(msgs, loc);
+    }
+    std::sort(order.rbegin(), order.rend());
+    const std::string variant = "tick-sym-t" + std::to_string(threads);
+    for (int r = 0; r <= reps; ++r) {
+        const auto t0 = std::chrono::steady_clock::now();
+        std::atomic<std::size_t> next{0};
+        std::atomic<std::uint64_t> n{0}, bbo{0}, errors{0};
+        auto worker = [&] {
+            std::uint64_t cn = 0, cbbo = 0, cerr = 0;
+            for (std::size_t i; (i = next.fetch_add(1)) < order.size();) {
+                Tick b(1 << 16);
+                book::ItchApply<Tick> ap{b};
+                data::SymbolReader rd(dir, order[i].second);
+                data::Record rec{};
+                while (rd.next(rec)) {
+                    ap.seq = rec.seq;
+                    itch::dispatch(rec.data, rec.len, ap);
+                    cbbo += b.bbo().bid_px;
+                    ++cn;
+                }
+                cerr += ap.stats.errors;
+            }
+            n += cn, bbo += cbbo, errors += cerr;
+        };
+        std::vector<std::thread> pool;
+        for (unsigned t = 1; t < std::max(threads, 1u); ++t) pool.emplace_back(worker);
+        worker();
+        for (auto& t : pool) t.join();
+        const double s = secs(t0, std::chrono::steady_clock::now());
+        if (r > 0) {
+            std::printf("replay-sym,%s,%d,%llu,%.0f,,,,,%llu\n", variant.c_str(), r,
+                        (unsigned long long)n.load(), s * 1e9, (unsigned long long)errors.load());
+            std::fprintf(stderr, "bbo_sum %llu\n", (unsigned long long)bbo.load());
+        }
     }
 }
 
@@ -432,6 +483,8 @@ int main(int argc, char** argv) {
         book_mode(dir, locs, reps, mode);
     else if (mode == "replay")
         replay(dir, locs, reps, threads);
+    else if (mode == "replay-sym")
+        replay_sym(dir, locs, reps, threads);
     else
         return 2;
     return 0;
