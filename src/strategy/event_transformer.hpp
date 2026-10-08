@@ -17,11 +17,30 @@
 #include <cstring>
 #include <fstream>
 #include <memory>
+#include <new>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace hft::strategy {
+
+// Storage aligned to a cache line, so no 32-byte vector load of a row straddles two lines.
+template <class T, std::size_t A = 64>
+struct AlignedAlloc {
+    using value_type = T;
+    AlignedAlloc() = default;
+    template <class U>
+    AlignedAlloc(const AlignedAlloc<U, A>&) {}
+    template <class U>
+    struct rebind {
+        using other = AlignedAlloc<U, A>;
+    };
+    T* allocate(std::size_t n) { return static_cast<T*>(::operator new(n * sizeof(T), std::align_val_t(A))); }
+    void deallocate(T* p, std::size_t) { ::operator delete(p, std::align_val_t(A)); }
+    template <class U>
+    bool operator==(const AlignedAlloc<U, A>&) const { return true; }
+};
+using AlignedFloats = std::vector<float, AlignedAlloc<float>>;
 
 struct EventToken {
     int type, side, dist, size;
@@ -81,8 +100,8 @@ class EventTransformer {
 
     // Per-symbol cache: keys and values of the last `window` events in every layer.
     struct State {
-        std::vector<float> k, v;  // [layer][slot][d]
-        std::vector<float> kt;    // keys transposed, [layer][d][slot (+8 padding)]: 8 scores per FMA
+        AlignedFloats k, v;  // [layer][slot][d]
+        AlignedFloats kt;    // keys transposed, [layer][d][slot (+8 padding)]: 8 scores per FMA
         std::uint64_t pos = 0;
     };
     State state() const {
@@ -166,7 +185,7 @@ class EventTransformer {
     struct Mat {
         const float *w = nullptr, *b = nullptr;
         int rows = 0, cols = 0, rows8 = 0;
-        std::vector<float> t, b8;
+        AlignedFloats t, b8;
         Mat() = default;
         Mat(const float* w_, const float* b_, int r, int c) : w(w_), b(b_), rows(r), cols(c), rows8((r + 7) & ~7) {
             t.assign(static_cast<std::size_t>(rows8 * cols), 0.0f);
