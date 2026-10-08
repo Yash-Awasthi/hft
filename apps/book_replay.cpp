@@ -3,8 +3,10 @@
 // Usage: book_replay <store-dir> <book> [locate ...]   (no locate: every symbol)
 //   book: map | tick | tick-rh | tick-dm | tick-aos | tick-soa | tick-sv | btree
 // Env: CHECK_EVERY=N runs the full invariant check every N book events (default 0: off).
+//      THREADS=N replays N symbols at a time (default: all hardware threads); rows print in locate order.
 
 #include <algorithm>
+#include <atomic>
 #include <cinttypes>
 #include <cstdio>
 #include <cstdlib>
@@ -12,6 +14,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include "book/btree_book.hpp"
@@ -146,8 +149,13 @@ int main(int argc, char** argv) {
     std::printf(
         "locate symbol msgs book_msgs errors max_orders bbo_changes crossed locked "
         "max_cross_ms crossed_trading executed hidden cross check_fail bbo_hash\n");
-    int rc = 0;
-    for (std::uint16_t loc : locates) {
+    static const std::string_view kKinds[] = {"map", "tick", "tick-rh", "tick-dm",
+                                              "tick-aos", "tick-soa", "tick-sv", "btree"};
+    if (std::find(std::begin(kKinds), std::end(kKinds), kind) == std::end(kKinds)) {
+        std::fprintf(stderr, "unknown book %s\n", argv[2]);
+        return 2;
+    }
+    auto run_one = [&](std::uint16_t loc) {
         Result r;
         if (kind == "map")
             r = replay<book::MapBook>(dir, loc, check_every);
@@ -165,11 +173,30 @@ int main(int argc, char** argv) {
             r = replay<book::SortedVecBook<>>(dir, loc, check_every);
         else if (kind == "btree")
             r = replay<book::BTreeBook<>>(dir, loc, check_every);
-        else {
-            std::fprintf(stderr, "unknown book %s\n", argv[2]);
-            return 2;
-        }
+        else
+            r = replay<book::BTreeBook<>>(dir, loc, check_every);
         if (r.max_cross_ns > kPersistentCrossNs) ++r.check_failures;
+        return r;
+    };
+
+    // Symbols are independent, so they replay on a pool; rows still print in locate order.
+    const char* te = std::getenv("THREADS");
+    const unsigned threads =
+        te ? static_cast<unsigned>(std::strtoul(te, nullptr, 10)) : std::thread::hardware_concurrency();
+    std::vector<Result> results(locates.size());
+    std::atomic<std::size_t> next{0};
+    auto worker = [&] {
+        for (std::size_t i; (i = next.fetch_add(1)) < locates.size();) results[i] = run_one(locates[i]);
+    };
+    std::vector<std::thread> pool;
+    for (unsigned t = 1; t < std::max(threads, 1u); ++t) pool.emplace_back(worker);
+    worker();
+    for (auto& t : pool) t.join();
+
+    int rc = 0;
+    for (std::size_t i = 0; i < locates.size(); ++i) {
+        const std::uint16_t loc = locates[i];
+        const Result& r = results[i];
         if (r.stats.errors || r.check_failures) rc = 1;
         std::printf("%u %s %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64
                     " %" PRIu64 " %.3f %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64
