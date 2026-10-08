@@ -195,3 +195,7 @@ Each milestone has a report under `docs/results/`:
   queue-reactive simulator and the transformer.
 
 A pre-registration draft is in `docs/prereg/`; test days stay locked until a frozen run.
+
+## License
+
+MIT; see [LICENSE](LICENSE).
