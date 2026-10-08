@@ -87,12 +87,50 @@ The earlier turbo-on figures (pipeline 33.7M, decode thread alone 50.4M, decompr
 msg/s) came from ad hoc runs with no recorded tool; `decode-only` and `decompress` replace
 them and are not directly comparable.
 
+## Optimisation pass (2026-10-07)
+
+Same conditions as the baseline (clock read before and after every run: 2.29 to 2.45 GHz),
+10 repetitions each, before and after built from the parent commit and the change. Raw
+output in `~/data/opt-2026-10-07`, produced by `~/data/handoff-2026-10-07/bench-optimisation.sh`
+(worktrees, pinned runs, clock checks) and summarised by `compare.py` beside it.
+
+| Change | Measure | Before | After | Change | Mann-Whitney p |
+|---|---|---|---|---|---|
+| Sequence-window merge (`fd53027`) | decode thread alone, M msg/s | 23.8 [23.7, 24.1] | 32.3 [31.0, 33.0] | +35% | 0.00018 |
+| | pipeline, one read-ahead thread, M msg/s | 18.0 [17.9, 18.1] | 18.1 [18.1, 18.1] | +0.4% | 0.021 |
+| | full-day replay, 50 stocks, s | 25.69 [25.57, 25.75] | 23.93 [23.52, 24.07] | -6.8% | 0.00018 |
+| Parallel read-ahead (`52233dc`) | pipeline, 2 threads, M msg/s | 18.1 | 31.6 [30.8, 32.1] | +75% | 0.00018 |
+| | pipeline, 4 threads, M msg/s | 18.1 | 30.0 [29.7, 31.0] | +66% | 0.00018 |
+| | replay, 2 / 4 threads, s | 23.93 | 23.72 / 24.04 | +0.9% / -0.4% rate | 0.73 / 0.68 |
+| One ID probe per operation (`e0484ef`) | GOOGL batch, ns/event | 51.9 [50.8, 52.1] | 48.0 [47.6, 48.7] | -7.5% | 0.00018 |
+| | GOOGL p50 / p99, ns | 53.5 / 175.2 | 52.8 / 139.8 | -1.3% / -20% | 0.0028 / 0.0017 |
+| | 50 symbols batch, ns/event | 74.6 [74.1, 75.3] | 71.6 [71.1, 72.4] | -4.1% | 0.00018 |
+| | 50 symbols p50 / p99, ns | 79.6 / 365.3 | 79.6 / 366.7 | 0% / +0.4% | 0.28 / 0.056 |
+| | Cachegrind, 10 symbols: instr / D1 miss per event | 257.4 / 2.98 | 247.9 / 2.99 | -3.7% / 0% | - |
+
+The "before" decode-thread figure (23.8M) runs the real `MergedReader` with its per-record
+heap; the baseline's 18.8M used a separate heap in the benchmark and is not comparable.
+After the window merge the decode thread is no longer the bottleneck at one read-ahead
+thread: one zstd thread (17.4M/s) is, and two threads lift the pipeline to the decode
+thread's own rate; a third and fourth add nothing. Replay is bound by the book (6.2M msg/s
+over 148M messages), so more read-ahead threads do not change it. The single-symbol p99
+moves between runs (152 ns at the baseline, 175 ns in this "before" run); its interval after
+is [136, 159] ns.
+
+Tried and reverted, by Cachegrind instruction count on GOOGL (5.15M events): moving the
+radix and overflow paths out of line (+6.6%, since 16% of level lookups in the fifty busiest
+symbols fall outside the window, so the path is not cold) and dividing by the tick through a
+precomputed reciprocal (-0.3%).
+
 ## Targets (DESIGN.md section 9)
 
-| Target | Value | Measured | Status |
-|---|---|---|---|
-| Read + decode | >= 50M msg/s | 18.8M (decode thread alone), 17.8M (pipeline) | miss |
-| Book update median | <= 30 ns | 53.5 ns one symbol; 81.0 ns fifty interleaved | miss / miss |
-| Book update p99 | <= 150 ns | 152.0 ns one symbol; 365.6 ns fifty interleaved | miss / miss |
-| Full-day replay, 50 stocks | <= 60 s | 25.9 s (2025-12-08) | met |
-| Fork, 10k orders | <= 100 us, >= 10 GB/s | 53.4 us, 16.0 GiB/s, 869 KB state | met |
+Targets as revised on 2026-10-08 (DESIGN.md section 9, "Target revisions"); the old ones were
+set from turbo-on runs.
+
+| Target | Old | Revised | Baseline | Final | Status |
+|---|---|---|---|---|---|
+| Read + decode | >= 50M msg/s | >= 30M, two decompression threads | 18.8M decode thread alone, 17.8M pipeline | 32.3M decode thread alone, 31.6M pipeline | met |
+| Book update, one symbol | <= 30 / 150 ns | <= 55 / 160 ns | 53.5 / 152.0 ns | 52.8 / 139.8 ns | met |
+| Book update, 50 symbols | - | <= 85 / 400 ns | 81.0 / 365.6 ns | 79.6 / 366.7 ns | met |
+| Full-day replay, 50 stocks | <= 60 s | unchanged | 25.9 s | 23.9 s | met |
+| Fork, 10k orders | <= 100 us, >= 10 GB/s | unchanged | 53.4 us, 16.0 GiB/s, 869 KB state | - | met |

@@ -55,6 +55,36 @@ Step latency on an idle machine with turbo on (before the baseline), 10 repetiti
 
 Standard deviations across repetitions are 6 to 18 ns. The earlier figures of about 2,130 ns for both models were taken while a backtest sweep ran on 4 to 6 cores; with turbo on (about 4.7 GHz) both kernels met the target, but not at the baseline above; the transposed scores take 4% (base) and 18% (small) off the step.
 
+## Kernel optimisation (2026-10-08)
+
+Same conditions as the baseline table (clock 2.39 to 2.45 GHz, read before and after every
+run), 10 repetitions, before built from the parent commit (`ee49337`), after from `5ccbb38`.
+The step was latency-bound: the scores and the attention sum each ran one long chain of
+dependent FMAs. Changes, cumulative:
+
+1. Scores four 8-slot blocks at a time, and the attention sum over the ring as two
+   contiguous runs with four partial sums (base 3,329 to 2,856 ns, small 2,971 to 2,654).
+2. Score scaling, ALiBi bias and maximum in AVX2 over the two runs; matrix-vector blocks of
+   64 rows so each broadcast feeds eight FMAs (2,619 / 2,190).
+3. The last one to three row blocks of a matrix-vector product share each broadcast (no
+   measurable change, 2,595 / 2,174; kept as the tail of the same loop).
+4. RMSNorm in AVX2, and the softmax's 1/sum applied once to the attention output instead of
+   to every probability (2,545 / 2,140).
+
+| Model | Path | Before ns | After ns | Change | Mann-Whitney p | Target |
+|---|---|---|---|---|---|---|
+| Base | AVX2 | 3,329 | 2,545 | -23.5% | 0.00018 | < 2,000 (miss) |
+| Base | AVX2 forecast only | 3,127 | 2,373 | -24.1% | 0.00018 | |
+| Small | AVX2 | 2,971 | 2,140 | -28.0% | 0.00018 | < 2,000 (miss) |
+| Small | AVX2 forecast only | 2,827 | 1,975 | -30.1% | 0.00018 | < 2,000 (met) |
+
+Standard deviations after are 11 to 74 ns. The step is now close to instruction-bound
+(about 2.8 instructions per cycle; Cachegrind counts about 15k instructions per step for the
+small model). Kernel against PyTorch on the same 200,000 INTC validation events after the
+change: max abs logit error 7.6e-6 (base, AVX2) and 1.4e-5 (small, AVX2); forecast arg-max
+equal on 100% of events at 10 and 100 events; next-event class 99.9995% (base) and 100%
+(small). Raw output: `~/data/opt-2026-10-07/step-*.csv`.
+
 ## Not built
 
 - int8 and AVX-VNNI paths, ONNX Runtime and LibTorch baselines (Stretch).

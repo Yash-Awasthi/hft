@@ -43,20 +43,32 @@ copy of the used part of each pool with no pointer fix-up.
 
 ## Performance
 
-Measured on an i7-13650HX under WSL2, pinned, mains power, turbo off (about 2.4 GHz),
-2026-10-07. Raw output: `book_study` and `hft_bench` CSVs, summarised by
-`research/book_study.py` with bootstrap intervals and Mann-Whitney tests. An optimisation
-pass (sequence-window merge, parallel read-ahead, one ID probe per book operation) has
-landed since; its before/after figures are pending.
+Measured on an i7-13650HX under WSL2, pinned, mains power, turbo off (about 2.4 GHz, clock
+read before and after every run), 10 repetitions, medians; before/after differences tested
+with Mann-Whitney. Targets were revised once on these results, from turbo-on originals
+(record in DESIGN.md section 9).
 
-| Path | Target | Baseline |
-|---|---|---|
-| Book update, one symbol (GOOGL) | p50 ≤ 30 ns, p99 ≤ 150 ns | 53.5 / 152 ns |
-| Book update, 50 symbols interleaved | p50 ≤ 30 ns, p99 ≤ 150 ns | 81.0 / 366 ns |
-| Read + decode, 50 symbols | ≥ 50M msg/s | 18.8M decode thread alone, 17.8M pipeline |
-| Full-day replay, 50 stocks | ≤ 60 s | 25.9 s |
-| Fork, 10k orders | ≤ 100 µs, ≥ 10 GB/s | 53.4 µs, 16.0 GiB/s |
-| Transformer step, AVX2 | < 2 µs | 3,435 ns (base), 2,935 ns (small) |
+| Path | Target | Baseline | Now |
+|---|---|---|---|
+| Book update, one symbol (GOOGL), p50 / p99 | ≤ 55 / 160 ns | 53.5 / 152 ns | 52.8 / 140 ns |
+| Book update, 50 symbols interleaved, p50 / p99 | ≤ 85 / 400 ns | 81.0 / 366 ns | 79.6 / 367 ns |
+| Read + decode, 50 symbols | ≥ 30M msg/s | 17.8M | 31.6M (two decompression threads) |
+| Full-day replay, 50 stocks, one replay thread | ≤ 60 s | 25.9 s | 23.9 s |
+| Fork, 10k orders | ≤ 100 µs, ≥ 10 GB/s | 53.4 µs, 16.0 GiB/s | |
+| Transformer forecast step, small model, AVX2 | < 2 µs | 2,786 ns | 1,975 ns |
+
+What moved the numbers:
+
+- **Merge.** Records from all symbols are scattered into a 4,096-sequence window and emitted
+  by a bitmap scan instead of one heap operation per record: the decode thread went from
+  23.8M to 32.3M msg/s.
+- **Read-ahead.** Chunks decompress on N threads and are handed over strictly in sequence
+  order, so output stays byte-identical (store SHA-256 unchanged): the pipeline went from
+  18.1M to 31.6M msg/s with two threads.
+- **Book.** One order-ID probe per operation instead of two to four, keeping the hash table
+  image identical so stored checkpoints still verify: 7.5% off the single-symbol batch cost.
+- **Transformer.** Score and attention loops rebuilt around independent FMA chains, plus
+  AVX2 for the remaining scalar loops: 23 to 30% off the step.
 
 Book variants (`std::map`, Robin Hood and direct-mapped ID maps, AoS / SoA / hot-cold
 layouts, sorted vector, B-tree) are compared in

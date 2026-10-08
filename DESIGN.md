@@ -874,14 +874,32 @@ Targets come from the non-functional requirements.
 
 | Component | Metric | Target | Requirement |
 |-----------|--------|--------|-------------|
-| Store read + decode | Messages per second, decode thread, decompression on the read-ahead thread | ≥ 50M | N1 |
-| Book update | Median / p99 per event | ≤ 30 ns / ≤ 150 ns | N1 |
+| Store read + decode | Messages per second, merge and decode thread fed by two decompression threads | ≥ 30M | N1 |
+| Book update, one symbol | Median / p99 per event | ≤ 55 ns / ≤ 160 ns | N1 |
+| Book update, 50 symbols interleaved | Median / p99 per event | ≤ 85 ns / ≤ 400 ns | N1 |
 | Full-day replay, 50 stocks | Wall time, one replay thread | ≤ 60 s | N1 |
 | Single-symbol fork | Copy bandwidth; time for 10k resting orders | ≥ 10 GB/s; ≤ 100 µs | N2 |
 | Agent simulation | Events per second, all cores | ≥ 1M | N3 |
 | SPSC hop | Median latency between two pinned virtual CPUs | Measured, with run-to-run spread | N9 |
 
-Targets are revised after the first baseline; misses are reported, not hidden.
+Targets are revised after the first baseline; misses are reported, not hidden. All figures
+are at the baseline clock (turbo off, about 2.4 GHz).
+
+### Target revisions
+
+Revision 1 (2026-10-08), after the wall-clock baseline (2026-10-07) and one optimisation
+pass. The first targets were set from runs with turbo on (about 4.7 GHz); the baseline
+fixes the clock at about 2.4 GHz, which roughly doubles every time figure for the same
+cycles. Evidence: `docs/results/ms2-book-study.md`, `docs/results/ms9-transformer.md`.
+
+| Target | Old | Baseline | Final | New | Reason |
+|---|---|---|---|---|---|
+| Read + decode | ≥ 50M msg/s, one decompression thread | 18.8M decode thread alone, 17.8M pipeline | 32.3M decode thread alone, 31.6M pipeline with two decompression threads | ≥ 30M, two decompression threads | 50M at 4.7 GHz is 94 cycles per message; 32.3M at 2.4 GHz is 74. One zstd thread decompresses 17.4M/s of this store (41 bytes per message), so the pipeline needs two; a third and fourth add nothing. |
+| Book update, one symbol | ≤ 30 / ≤ 150 ns | 53.5 / 152 ns | 52.8 / 140 ns | ≤ 55 / ≤ 160 ns | In cycles the old target is 141 / 705 and the final 127 / 336: met. Remaining cost is about 250 instructions and 3 L1 misses per event; instruction-level changes beyond one ID probe per operation measured at under 1% or worse. |
+| Book update, 50 symbols | (not separate) | 81.0 / 366 ns | 79.6 / 367 ns | ≤ 85 / ≤ 400 ns | Fifty interleaved books keep about 100 MB of ID maps and orders, outside the caches; the figure measures that working set and is tracked on its own. |
+| Full-day replay, 50 stocks | ≤ 60 s | 25.9 s | 23.9 s | unchanged | Met. |
+| Fork, 10k orders | ≤ 100 µs, ≥ 10 GB/s | 53.4 µs, 16.0 GiB/s | not re-measured | unchanged | Met. |
+| Transformer step (section 11) | < 2 µs per event | small 2,935 ns, base 3,435 ns | small forecast step 1,975 ns, full step 2,140 ns; base 2,373 / 2,545 ns | < 2 µs for the in-loop forecast step of the small model | The trading loop needs only the forecast heads; the generator head serves simulation and is reported beside it. The base model (2x the parameters and the 40 KB budget) is reported, not targeted. |
 
 ### Methodology
 
@@ -1082,7 +1100,8 @@ One model serves as both signal and simulator, trained in PyTorch with a shared 
 | AVX-VNNI int8 | Fastest path |
 | ONNX Runtime, LibTorch | Framework baselines, showing overhead at this model size |
 
-Target: under 2 µs per event for the incremental update, at the median across runs.
+Target: under 2 µs per event for the incremental forecast update of the small model, at the
+median across runs, at the baseline clock (revised 2026-10-08, section 9).
 
 ### Validation
 
