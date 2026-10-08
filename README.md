@@ -164,15 +164,19 @@ per-symbol store with:
 scripts/ingest_day.sh S121225-v50.txt.gz
 ```
 
-`ingest <store-dir> <day.gz>` decompresses in-process, checks the gzip CRC and records the
-SHA-256 of the download in `<store-dir>/source.sha256`. Then:
+`ingest <store-dir> <day.gz> [--codec lz4|zstd]` decompresses in-process, checks the gzip CRC
+and records the SHA-256 of the download in `<store-dir>/source.sha256`. Chunks are LZ4-HC by
+default: 3.5 times faster to decompress than zstd for 11% more disk, and one read-ahead thread
+keeps up with the replay. A store is read in whichever codec its files use (`.lz4` or `.zst`).
+Ingesting a full day with LZ4-HC takes about ten minutes. Then:
 
 ```
 store_cat <store> [threads] | sha256sum          # merged stream, equals the download
-book_replay <store> tick                         # BBO hash and invariants, every symbol
-checkpoint <store> [--verify]                    # write or verify book checkpoints
+book_replay <store> tick                         # BBO hash and invariants, every symbol (THREADS=N)
+checkpoint <store> [--verify]                    # write or verify book checkpoints (THREADS=N)
 book_study <store> book 50 10                    # book update latency, 50 busiest symbols
-book_study <store> replay 50 10 [threads]        # full-day replay
+book_study <store> replay 50 10 [threads]        # full-day replay, symbols merged in feed order
+book_study <store> replay-sym 50 10 [threads]    # the same books, one symbol at a time on a pool
 python research/backtests.py <py-build> --name <sweep> --days <YYYY-MM-DD>...
 ```
 
