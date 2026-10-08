@@ -122,49 +122,38 @@ class TickBook {
     }
     // Head order of the nearest level on `side` strictly worse than `px`.
     std::optional<OrderView> next_level(Side side, std::uint32_t px) const {
-        const int s = static_cast<int>(side);
-        std::uint32_t best_px = 0;
-        const Level* best_l = nullptr;
-        auto consider = [&](std::uint32_t p, const Level* l) {
-            if (!best_l || worse(s, best_px, p)) best_px = p, best_l = l;
-        };
-        if (tick_) {
-            // Window: indices whose price is strictly worse than px.
-            if (s == 0) {
-                if (px > base_) {
-                    const std::uint64_t lim = (std::uint64_t{px} - base_ + tick_ - 1) / tick_;
-                    if (std::uint32_t k; win_below(
-                            s, static_cast<std::uint32_t>(std::min<std::uint64_t>(lim, kLevels)),
-                            k))
-                        consider(base_ + k * tick_, &win_[s][k]);
-                }
-            } else {
-                const std::uint64_t from = px < base_ ? 0 : (std::uint64_t{px} - base_) / tick_ + 1;
-                if (std::uint32_t k;
-                    from < kLevels && win_from(s, static_cast<std::uint32_t>(from), k))
-                    consider(base_ + k * tick_, &win_[s][k]);
-            }
-            // Radix, on tick indices.
-            if (kLevels) {
-                std::uint32_t g;
-                const std::uint64_t ceil = (std::uint64_t{px} + tick_ - 1) / tick_;
-                const bool found =
-                    s == 0 ? (ceil >= LevelRadix<Level>::kRange
-                                  ? deep_[s].extreme(true, g)
-                                  : deep_[s].next(true, static_cast<std::uint32_t>(ceil), g))
-                           : px / tick_ < LevelRadix<Level>::kRange &&
-                                 deep_[s].next(false, px / tick_, g);
-                if (found) consider(g * tick_, &deep_[s].at(g));
-            }
-        }
-        // Off-grid array, worst first: the last entry strictly worse than px.
-        const OverLevel* b = &over_[s][0];
-        const OverLevel* e = b + n_over_[s];
-        const OverLevel* it = std::lower_bound(
-            b, e, px, [s](const OverLevel& o, std::uint32_t p) { return worse(s, o.px, p); });
-        if (it != b) consider((it - 1)->px, &(it - 1)->l);
-        if (!best_l) return std::nullopt;
-        return view(best_l->head);
+        const auto [p, l] = next_level_raw(side, px);
+        if (!l) return std::nullopt;
+        return view(l->head);
+    }
+
+    // Price and total shares of a level, for callers that do not need its orders: no order
+    // record is read.
+    struct LevelInfo {
+        std::uint32_t price;
+        std::uint64_t qty;
+    };
+    std::optional<LevelInfo> best_level(Side side) const {
+        const auto [px, l] = best(static_cast<int>(side));
+        if (!l) return std::nullopt;
+        return LevelInfo{px, l->qty};
+    }
+    std::optional<LevelInfo> next_level_info(Side side, std::uint32_t px) const {
+        const auto [p, l] = next_level_raw(side, px);
+        if (!l) return std::nullopt;
+        return LevelInfo{p, l->qty};
+    }
+
+    // Sum of the shares of the orders at (side, price), in queue order, for which
+    // pred(ref, seq) holds. Walks the level by index; zero when the level is absent.
+    template <class Pred>
+    std::uint64_t sum_where(Side side, std::uint32_t price, Pred&& pred) const {
+        const Level* l = find_level(static_cast<int>(side), price);
+        std::uint64_t n = 0;
+        if (l)
+            for (std::uint32_t i = l->head; i != kNoOrder; i = o_.next(i))
+                if (pred(o_.ref(i), o_.seq(i))) n += o_.qty(i);
+        return n;
     }
 
     // Shares resting at one price on one side.
@@ -395,6 +384,63 @@ class TickBook {
     std::uint32_t slot(std::uint32_t px) const {
         const std::uint32_t g = grid(px);
         return g != kNoOrder && g - base_g_ < kLevels ? g - base_g_ : kNoOrder;
+    }
+
+    // The nearest level on `side` strictly worse than `px`: its price and a pointer to it.
+    std::pair<std::uint32_t, const Level*> next_level_raw(Side side, std::uint32_t px) const {
+        const int s = static_cast<int>(side);
+        std::uint32_t best_px = 0;
+        const Level* best_l = nullptr;
+        auto consider = [&](std::uint32_t p, const Level* l) {
+            if (!best_l || worse(s, best_px, p)) best_px = p, best_l = l;
+        };
+        if (tick_) {
+            // Window: indices whose price is strictly worse than px.
+            if (s == 0) {
+                if (px > base_) {
+                    const std::uint64_t lim = (std::uint64_t{px} - base_ + tick_ - 1) / tick_;
+                    if (std::uint32_t k; win_below(
+                            s, static_cast<std::uint32_t>(std::min<std::uint64_t>(lim, kLevels)),
+                            k))
+                        consider(base_ + k * tick_, &win_[s][k]);
+                }
+            } else {
+                const std::uint64_t from = px < base_ ? 0 : (std::uint64_t{px} - base_) / tick_ + 1;
+                if (std::uint32_t k;
+                    from < kLevels && win_from(s, static_cast<std::uint32_t>(from), k))
+                    consider(base_ + k * tick_, &win_[s][k]);
+            }
+            // Radix, on tick indices.
+            if (kLevels) {
+                std::uint32_t g;
+                const std::uint64_t ceil = (std::uint64_t{px} + tick_ - 1) / tick_;
+                const bool found =
+                    s == 0 ? (ceil >= LevelRadix<Level>::kRange
+                                  ? deep_[s].extreme(true, g)
+                                  : deep_[s].next(true, static_cast<std::uint32_t>(ceil), g))
+                           : px / tick_ < LevelRadix<Level>::kRange &&
+                                 deep_[s].next(false, px / tick_, g);
+                if (found) consider(g * tick_, &deep_[s].at(g));
+            }
+        }
+        // Off-grid array, worst first: the last entry strictly worse than px.
+        const OverLevel* b = &over_[s][0];
+        const OverLevel* e = b + n_over_[s];
+        const OverLevel* it = std::lower_bound(
+            b, e, px, [s](const OverLevel& o, std::uint32_t p) { return worse(s, o.px, p); });
+        if (it != b) consider((it - 1)->px, &(it - 1)->l);
+        return {best_px, best_l};
+    }
+
+    const Level* find_level(int s, std::uint32_t px) const {
+        if (const std::uint32_t k = slot(px); k != kNoOrder)
+            return (bits_[s][k / 64] >> (k % 64)) & 1 ? &win_[s][k] : nullptr;
+        if (const std::uint32_t g = grid(px); g != kNoOrder) return deep_[s].find(g);
+        const OverLevel* b = &over_[s][0];
+        const OverLevel* e = b + n_over_[s];
+        const OverLevel* it = std::lower_bound(
+            b, e, px, [s](const OverLevel& o, std::uint32_t p) { return worse(s, o.px, p); });
+        return it != e && it->px == px ? &it->l : nullptr;
     }
 
     // Where a level lives, found once per operation: window slot, radix index or array.
