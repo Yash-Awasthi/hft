@@ -347,55 +347,57 @@ class EventTransformer {
             for (int r = 0; r < m.rows; ++r) out[r] = dot<false>(m.w + r * m.cols, x, m.cols) + m.b[r];
         }
     }
-    // Eight, then four row blocks at a time: independent FMA chains hide the FMA latency and
-    // each broadcast of x[c] feeds several of them.
+    // NB row blocks of eight outputs over KS interleaved column sets: KS * NB independent FMA
+    // chains (about eight keep both FMA ports busy), so a short matrix is not latency bound.
+    template <int NB, int KS>
+    __attribute__((target("avx2,fma"), always_inline)) static inline void mv_blocks(const Mat& m, const float* x,
+                                                                                    int r, float* tmp) {
+        const float* t = m.t.data() + r;
+        const int rows8 = m.rows8, cols = m.cols;
+        __m256 a[KS][NB];
+        for (int k = 0; k < NB; ++k) a[0][k] = _mm256_loadu_ps(m.b8.data() + r + 8 * k);
+        for (int s = 1; s < KS; ++s)
+            for (int k = 0; k < NB; ++k) a[s][k] = _mm256_setzero_ps();
+        int c = 0;
+        for (; c + KS <= cols; c += KS)
+            for (int s = 0; s < KS; ++s) {
+                const __m256 xc = _mm256_set1_ps(x[c + s]);
+                const float* row = t + (c + s) * rows8;
+                for (int k = 0; k < NB; ++k) a[s][k] = _mm256_fmadd_ps(xc, _mm256_loadu_ps(row + 8 * k), a[s][k]);
+            }
+        for (; c < cols; ++c) {
+            const __m256 xc = _mm256_set1_ps(x[c]);
+            for (int k = 0; k < NB; ++k) a[0][k] = _mm256_fmadd_ps(xc, _mm256_loadu_ps(t + c * rows8 + 8 * k), a[0][k]);
+        }
+        for (int k = 0; k < NB; ++k) {
+            __m256 v = a[0][k];
+            for (int s = 1; s < KS; ++s) v = _mm256_add_ps(v, a[s][k]);
+            _mm256_store_ps(tmp + r + 8 * k, v);
+        }
+    }
+    template <int NB>
+    __attribute__((target("avx2,fma"), always_inline)) static inline void mv_pick(const Mat& m, const float* x, int r,
+                                                                                  float* tmp) {
+        if constexpr (NB == 1) mv_blocks<1, 8>(m, x, r, tmp);
+        else if constexpr (NB == 2) mv_blocks<2, 4>(m, x, r, tmp);
+        else if constexpr (NB == 3) mv_blocks<3, 4>(m, x, r, tmp);
+        else if constexpr (NB <= 6) mv_blocks<NB, 2>(m, x, r, tmp);
+        else mv_blocks<NB, 1>(m, x, r, tmp);
+    }
     __attribute__((target("avx2,fma"))) static void mv_avx2(const Mat& m, const float* x, float* out) {
-        alignas(32) float tmp[kMaxH + 32];
-        const float* t = m.t.data();
+        alignas(32) float tmp[kMaxH + 96];
         int r = 0;
-        for (; r + 64 <= m.rows8; r += 64) {
-            __m256 a[8];
-            for (int k = 0; k < 8; ++k) a[k] = _mm256_loadu_ps(m.b8.data() + r + 8 * k);
-            for (int c = 0; c < m.cols; ++c) {
-                const __m256 xc = _mm256_set1_ps(x[c]);
-                const float* row = t + c * m.rows8 + r;
-                for (int k = 0; k < 8; ++k) a[k] = _mm256_fmadd_ps(xc, _mm256_loadu_ps(row + 8 * k), a[k]);
+        for (int rem = m.rows8 / 8; rem > 0;) {
+            switch (rem) {
+#define HFT_MV_CASE(N) \
+    case N: mv_pick<N>(m, x, r, tmp); r += 8 * N; rem -= N; break;
+                HFT_MV_CASE(1) HFT_MV_CASE(2) HFT_MV_CASE(3) HFT_MV_CASE(4) HFT_MV_CASE(5) HFT_MV_CASE(6)
+                HFT_MV_CASE(7) HFT_MV_CASE(8) HFT_MV_CASE(9) HFT_MV_CASE(10) HFT_MV_CASE(11) HFT_MV_CASE(12)
+#undef HFT_MV_CASE
+                default: mv_pick<12>(m, x, r, tmp); r += 96; rem -= 12; break;
             }
-            for (int k = 0; k < 8; ++k) _mm256_store_ps(tmp + r + 8 * k, a[k]);
-        }
-        for (; r + 32 <= m.rows8; r += 32) {
-            __m256 a0 = _mm256_loadu_ps(m.b8.data() + r), a1 = _mm256_loadu_ps(m.b8.data() + r + 8);
-            __m256 a2 = _mm256_loadu_ps(m.b8.data() + r + 16), a3 = _mm256_loadu_ps(m.b8.data() + r + 24);
-            for (int c = 0; c < m.cols; ++c) {
-                const __m256 xc = _mm256_set1_ps(x[c]);
-                const float* row = t + c * m.rows8 + r;
-                a0 = _mm256_fmadd_ps(xc, _mm256_loadu_ps(row), a0);
-                a1 = _mm256_fmadd_ps(xc, _mm256_loadu_ps(row + 8), a1);
-                a2 = _mm256_fmadd_ps(xc, _mm256_loadu_ps(row + 16), a2);
-                a3 = _mm256_fmadd_ps(xc, _mm256_loadu_ps(row + 24), a3);
-            }
-            _mm256_store_ps(tmp + r, a0), _mm256_store_ps(tmp + r + 8, a1);
-            _mm256_store_ps(tmp + r + 16, a2), _mm256_store_ps(tmp + r + 24, a3);
-        }
-        switch ((m.rows8 - r) / 8) {
-            case 3: mv_tail<3>(m, x, r, tmp); break;
-            case 2: mv_tail<2>(m, x, r, tmp); break;
-            case 1: mv_tail<1>(m, x, r, tmp); break;
         }
         std::memcpy(out, tmp, sizeof(float) * static_cast<std::size_t>(m.rows));
-    }
-    // The last one to three row blocks, sharing each broadcast.
-    template <int N>
-    __attribute__((target("avx2,fma"), always_inline)) static inline void mv_tail(const Mat& m, const float* x, int r,
-                                                                                  float* tmp) {
-        const float* t = m.t.data() + r;
-        __m256 a[N];
-        for (int k = 0; k < N; ++k) a[k] = _mm256_loadu_ps(m.b8.data() + r + 8 * k);
-        for (int c = 0; c < m.cols; ++c) {
-            const __m256 xc = _mm256_set1_ps(x[c]);
-            for (int k = 0; k < N; ++k) a[k] = _mm256_fmadd_ps(xc, _mm256_loadu_ps(t + c * m.rows8 + 8 * k), a[k]);
-        }
-        for (int k = 0; k < N; ++k) _mm256_store_ps(tmp + r + 8 * k, a[k]);
     }
 
     int d_ = 0, layers_ = 0, heads_ = 0, hidden_ = 0, window_ = 0, nf_ = 0;
