@@ -183,14 +183,14 @@ class SymbolFeatures {
 
     template <class Book>
     static void walk(const Book& b, book::Side s, Level (&out)[kLevels]) {
-        auto f = b.front(s);
+        auto f = b.best_level(s);
         for (std::size_t k = 0; k < kLevels; ++k) {
             if (!f) {
                 out[k] = {};
                 continue;
             }
-            out[k] = {f->price, static_cast<double>(b.level_qty(s, f->price))};
-            f = b.next_level(s, f->price);
+            out[k] = {f->price, static_cast<double>(f->qty)};
+            f = b.next_level_info(s, f->price);
         }
     }
 

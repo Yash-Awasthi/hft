@@ -311,11 +311,9 @@ class Backtest {
         for (Working& w : working_) {
             if (w.ioc) continue;
             w.level = static_cast<double>(b.level_qty(w.side, w.price));
-            w.ahead = 0;
-            auto f = b.front(w.side);
-            while (f && f->price != w.price) f = b.next_level(w.side, f->price);
-            for (; f; f = b.behind(f->ref))
-                if (f->ref < w.key) w.ahead += f->qty;
+            const std::uint64_t key = w.key;
+            w.ahead = static_cast<double>(b.sum_where(
+                w.side, w.price, [key](std::uint64_t ref, std::uint64_t) { return ref < key; }));
         }
     }
 

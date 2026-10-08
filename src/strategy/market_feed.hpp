@@ -40,7 +40,7 @@ class MarketFeed {
             e.side = o->side;
             e.price = o->price;
             e.shares = shares ? shares : o->qty;
-            const auto best = f.book_.front(o->side);
+            const auto best = f.book_.best_level(o->side);
             e.at_best = best && best->price == o->price;
         }
         void operator()(const itch::AddOrder& m) {
@@ -49,7 +49,7 @@ class MarketFeed {
             e.side = m.side == 'B' ? book::Side::Buy : book::Side::Sell;
             e.price = m.price;
             e.shares = m.shares;
-            const auto best = f.book_.front(e.side);
+            const auto best = f.book_.best_level(e.side);
             e.at_best = !best || best->price == m.price ||
                         (e.side == book::Side::Buy ? m.price > best->price : m.price < best->price);
         }

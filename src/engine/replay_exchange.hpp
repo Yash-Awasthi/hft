@@ -47,8 +47,8 @@ class ReplayExchange {
     book::Bbo real_bbo() const {
         book::Bbo b;
         for (const Side s : {Side::Buy, Side::Sell}) {
-            for (auto f = book_.front(s); f; f = book_.next_level(s, f->price)) {
-                std::uint64_t q = book_.level_qty(s, f->price);
+            for (auto f = book_.best_level(s); f; f = book_.next_level_info(s, f->price)) {
+                std::uint64_t q = f->qty;
                 for (const Virt& v : virt_)
                     if (v.side == s && v.price == f->price) q -= book_.order(v.ref)->qty;
                 if (!q) continue;
@@ -205,11 +205,8 @@ class ReplayExchange {
 
     void rest(std::uint64_t ref, Side side, std::uint32_t qty, std::uint32_t price,
               std::uint32_t owner, std::uint64_t key) {
-        std::uint64_t ahead = 0;
-        auto f = book_.front(side);
-        while (f && f->price != price) f = book_.next_level(side, f->price);
-        for (; f; f = book_.behind(f->ref))
-            if (f->seq < key) ahead += f->qty;
+        const std::uint64_t ahead = book_.sum_where(
+            side, price, [key](std::uint64_t, std::uint64_t seq) { return seq < key; });
         book_.add(ref, side, qty, price, key, owner);
         virt_.push_back({ref, key, ahead, price, side});
     }
