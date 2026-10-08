@@ -1,5 +1,7 @@
 # hft
 
+[![ci](https://github.com/Yash-Awasthi/hft/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Yash-Awasthi/hft/actions/workflows/ci.yml)
+
 An L3 market-making lab in C++23 that replays real Nasdaq TotalView-ITCH days through an
 order-by-order book, a deterministic matching engine and an in-loop AVX2 transformer.
 
