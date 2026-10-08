@@ -147,6 +147,7 @@ class MergedReader {
     struct Slot {
         const std::uint8_t* data;
         std::uint16_t len;
+        std::uint16_t locate;
         std::uint32_t sym;
     };
 
