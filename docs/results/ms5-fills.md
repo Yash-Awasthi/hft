@@ -29,7 +29,7 @@ Findings:
 
 ## Fill model, markouts and queue value
 
-Train orders: 1509322 (['/home/yash/data/store-S120825-v50', '/home/yash/data/store-S120925-v50', '/home/yash/data/store-S121025-v50']); validation orders: 547205 (/home/yash/data/store-S121125-v50). One order in 20 sampled by reference; horizon 60 s.
+Train orders: 1509322 (['<store-dir>/store-S120825-v50', '<store-dir>/store-S120925-v50', '<store-dir>/store-S121025-v50']); validation orders: 547205 (<store-dir>/store-S121125-v50). One order in 20 sampled by reference; horizon 60 s.
 
 Validation outcomes (0 censored, 1 fill, 2 away): 0: 276574, 1: 52721, 2: 217910
 

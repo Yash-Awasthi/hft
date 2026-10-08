@@ -124,7 +124,9 @@ def main():
     train = pl.concat([o for o, _ in tr])
     train_fills = pl.concat([f for _, f in tr])
     val, val_fills = collect(hftpy, a.val, a.sample)
-    lines = [f"Train orders: {train.height} ({a.train}); validation orders: {val.height} ({a.val}). "
+    rel = lambda s: f"<store-dir>/{pathlib.Path(s).name}"
+    lines = [f"Train orders: {train.height} ({[rel(s) for s in a.train]}); "
+             f"validation orders: {val.height} ({rel(a.val)}). "
              f"One order in {a.sample} sampled by reference; horizon {HORIZON:.0f} s.", ""]
     counts = val.group_by("outcome").len().sort("outcome")
     lines += ["Validation outcomes (0 censored, 1 fill, 2 away): " +
