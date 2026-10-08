@@ -15,6 +15,7 @@ Usage: python research/signals.py <train.parquet>... --val <validation.parquet> 
 
 import argparse
 import json
+import os
 import pathlib
 import sqlite3
 import subprocess
@@ -189,7 +190,7 @@ def main():
     ap.add_argument("--val", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--train-every", type=int, default=6)
-    ap.add_argument("--registry", default=str(pathlib.Path.home() / "data/registry.sqlite"))
+    ap.add_argument("--registry", default=str(pathlib.Path(os.environ.get("HFT_DATA", pathlib.Path(os.environ.get("HFT_DATA", pathlib.Path.home() / "data")))) / "registry.sqlite"))
     a = ap.parse_args()
 
     # Every k-th train row keeps the job under the 14 GB limit of N4.

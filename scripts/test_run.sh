@@ -2,7 +2,8 @@
 # The one held-out run of MS11 (DESIGN.md section 4, protocol). Opens the locked test days once.
 # Run only after the strategies, parameters and report code are frozen at a tagged commit.
 # Usage: scripts/test_run.sh <frozen-tag>
-# Needs: the test-day stores ingested (scripts/ingest_day.sh) and the policies in ~/data/policies.
+# Needs: the test-day stores ingested (scripts/ingest_day.sh) and the policies in $HFT_DATA/policies.
+# Env: HFT_DATA (default ~/data), read by the research scripts.
 set -euo pipefail
 
 tag=${1:?usage: test_run.sh <frozen-tag>}
@@ -11,6 +12,7 @@ cd "$root"
 [ "$(git rev-parse HEAD)" = "$(git rev-parse "$tag^{commit}")" ] || { echo "HEAD is not $tag"; exit 1; }
 [ -z "$(git status --porcelain)" ] || { echo "working tree not clean"; exit 1; }
 py=${PYTHON:-python}
+export HFT_DATA=${HFT_DATA:-$HOME/data}
 
 echo "== lock audit before the run"
 "$py" research/audit.py

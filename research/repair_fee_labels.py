@@ -8,6 +8,7 @@ Usage: python research/repair_fee_labels.py <sweep-name>...
 """
 
 import json
+import os
 import pathlib
 import sqlite3
 import sys
@@ -17,7 +18,7 @@ import numpy as np
 import polars as pl
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-DATA = pathlib.Path.home() / "data"
+DATA = pathlib.Path(os.environ.get("HFT_DATA", pathlib.Path.home() / "data"))
 GROUP = ["strategy", "symbol", "day", "latency_us", "fill_rule"]
 
 

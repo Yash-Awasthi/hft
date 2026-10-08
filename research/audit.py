@@ -5,6 +5,7 @@ Usage: python research/audit.py [<data-dir>]
 """
 
 import json
+import os
 import pathlib
 import sqlite3
 import sys
@@ -34,7 +35,7 @@ def audit(data, splits):
 
 
 def main():
-    data = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path.home() / "data"
+    data = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(os.environ.get("HFT_DATA", pathlib.Path.home() / "data"))
     splits = tomllib.loads((ROOT / "configs/splits.toml").read_text())
     r = audit(data, splits)
     print(json.dumps(r, indent=1))

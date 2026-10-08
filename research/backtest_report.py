@@ -14,6 +14,7 @@ Usage: python research/backtest_report.py --main val-main --latency val-latency
 import argparse
 import itertools
 import json
+import os
 import pathlib
 import sqlite3
 import sys
@@ -25,7 +26,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "research"))
 import stats  # noqa: E402
 
-DATA = pathlib.Path.home() / "data"
+DATA = pathlib.Path(os.environ.get("HFT_DATA", pathlib.Path.home() / "data"))
 UNIT = 1e-6  # accounting unit in dollars (micro-dollars, src/backtest/accounting.hpp)
 KEYS = ["strategy", "symbol", "day", "latency_us", "fee_schedule", "fill_rule"]
 TERMS = ["spread", "adverse", "residual", "fees"]

@@ -83,7 +83,7 @@ Standard deviations after are 11 to 74 ns. The step is now close to instruction-
 small model). Kernel against PyTorch on the same 200,000 INTC validation events after the
 change: max abs logit error 7.6e-6 (base, AVX2) and 1.4e-5 (small, AVX2); forecast arg-max
 equal on 100% of events at 10 and 100 events; next-event class 99.9995% (base) and 100%
-(small). Raw output: `~/data/opt-2026-10-07/step-*.csv`.
+(small). Raw output: `$HFT_DATA/opt-2026-10-07/step-*.csv`.
 
 ## Not built
 

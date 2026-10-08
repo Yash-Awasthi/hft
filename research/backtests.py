@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 import multiprocessing as mp
+import os
 import pathlib
 import sqlite3
 import subprocess
@@ -21,7 +22,7 @@ import tomllib
 import polars as pl
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-DATA = pathlib.Path.home() / "data"
+DATA = pathlib.Path(os.environ.get("HFT_DATA", pathlib.Path.home() / "data"))
 POLICIES = DATA / "policies"
 
 

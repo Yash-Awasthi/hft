@@ -13,6 +13,7 @@ Usage: python research/regime_report.py --regime <dir> --val-stats <val.tsv> --f
 import argparse
 import hashlib
 import json
+import os
 import pathlib
 import subprocess
 import tomllib
@@ -102,7 +103,7 @@ def main():
     bundle.mkdir(parents=True, exist_ok=True)
     out.write_csv(bundle / "forecast.csv", float_precision=6)
     commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=ROOT).stdout.strip()
-    stores = sorted(pathlib.Path.home().joinpath("data").glob("store-S12*-v50"))
+    stores = sorted(pathlib.Path(os.environ.get("HFT_DATA", pathlib.Path(os.environ.get("HFT_DATA", pathlib.Path.home() / "data")))).glob("store-S12*-v50"))
     manifest = {
         "code_commit": commit,
         "forecast_sha256": sha256(bundle / "forecast.csv"),

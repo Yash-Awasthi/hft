@@ -81,8 +81,8 @@ task finishes or blocks.
 
 1. **Wall-clock baseline (STOP 1).** Done 2026-10-07: mains, idle, maximum processor
    state 99% for all three core classes, boost mode off (about 2.4 GHz). Wall-clock figures
-   below are at this baseline; raw output in `~/data/baseline-2026-10-07`, after the
-   optimisation pass in `~/data/opt-2026-10-07`. Windows has reset the processor state to
+   below are at this baseline; raw output in `$HFT_DATA/baseline-2026-10-07`, after the
+   optimisation pass in `$HFT_DATA/opt-2026-10-07`. Windows has reset the processor state to
    100% at least twice; check `freqcheck` (about 2.4 GHz) before any timed run.
 2. **Hardware counters.** The WSL2 guest has no PMU (`dmesg`: "unsupported CPU family 6
    model 183 no PMU driver, software events only"; no `arch_perfmon` in
@@ -155,7 +155,7 @@ task finishes or blocks.
 | MS6 | Ablation vs ext, small-tick | - | no toxicity +$234, no taking +$287, both removed (dp_signal) +$318 | same |
 | MS6 | Latency 0 to 500 us, ext | - | large-tick -$0.99 to -$16.46; small-tick -$4,176 to -$3,947 | same |
 | MS6 | AS small-tick | quotes | 0 orders: fitted k 0.027/tick gives 21.0-tick distance, collar 20 ticks rejects all (miss) | same |
-| MS6 | AS with online A/k (`as_online`), large-tick | - | -$53.05 [-96.76, -13.98] vs AS -$54.28; 430 vs 217 fills; -0.30 vs -0.61 c/share; small-tick still 0 orders (no fills, no refit) | `~/data/runs/val-as-online` |
+| MS6 | AS with online A/k (`as_online`), large-tick | - | -$53.05 [-96.76, -13.98] vs AS -$54.28; 430 vs 217 fills; -0.30 vs -0.61 c/share; small-tick still 0 orders (no fills, no refit) | `$HFT_DATA/runs/val-as-online` |
 | MS6 | Fee schedule, naive large-tick, queue rule | - | cap30 -$553 [-1,139, -167], cap10 -$929 [-1,283, -613] | `docs/results/ms6-backtest.md` |
 | MS6 | AS closed forms vs numerical HJB | match | max 1.8e-12 ticks at 23,400 s | `research/hjb.py` |
 | MS7 | QR parameter recovery (simulate, ingest, recalibrate) | within errors | rates within 5 SE, z mean/sd in band, theta within 4 SE; half tick too | `research/tests/test_qr.py` |

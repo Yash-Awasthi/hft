@@ -91,7 +91,7 @@ them and are not directly comparable.
 
 Same conditions as the baseline (clock read before and after every run: 2.29 to 2.45 GHz),
 10 repetitions each, before and after built from the parent commit and the change. Raw
-output in `~/data/opt-2026-10-07`, produced by `~/data/handoff-2026-10-07/bench-optimisation.sh`
+output in `$HFT_DATA/opt-2026-10-07`, produced by `$HFT_DATA/handoff-2026-10-07/bench-optimisation.sh`
 (worktrees, pinned runs, clock checks) and summarised by `compare.py` beside it.
 
 | Change | Measure | Before | After | Change | Mann-Whitney p |
