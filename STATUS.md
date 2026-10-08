@@ -70,7 +70,7 @@ task finishes or blocks.
 - Optimisation pass done 2026-10-08 (sequence-window merge, parallel read-ahead, one ID
   probe per book operation, transformer step kernels), measured before/after at the
   baseline; targets revised on the result (DESIGN.md section 9, "Target revisions").
-- Branch `ms6-finish` is merged into main (its worktree can go); main is not pushed (item 7).
+- Branch `ms6-finish` is merged into main (its worktree can go).
 - MS7 to MS10: first versions done with reports (`docs/results/ms7-regime.md`,
   `ms8-impact.md`, `ms9-transformer.md`, `ms10-validity.md`); misses listed under Results
   and in each report's "Not built".
@@ -107,8 +107,8 @@ task finishes or blocks.
    (`configs/fees.toml`): maker rebate $0.0020 and taker fee $0.0030 (30 mil cap), $0.0007 and
    $0.0010 under the 10 mil cap, Section 31 at $27.80 per $1M, FINRA TAF $0.000166 per share
    up to $8.30.
-7. **CI cost.** GitHub Actions minutes on the private repository are nearly used up. Making
-   the repository public (free minutes) is pending your action; pushes are held until then.
+7. **CI cost.** Resolved 2026-10-08: the repository is public, so GitHub Actions minutes are
+   free and pushes are no longer held.
 
 8. **Test-set run, MS11 (STOP: test-set unlock).** Needs your go-ahead to download and ingest the four
    locked test days and run `scripts/test_run.sh <tag>` once at a frozen tag. Audit now:
