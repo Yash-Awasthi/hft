@@ -40,6 +40,8 @@ class EventTransformer {
             throw std::runtime_error("event transformer: bad weights file " + path);
         d_ = static_cast<int>(h[1]), layers_ = static_cast<int>(h[2]), heads_ = static_cast<int>(h[3]);
         hidden_ = static_cast<int>(h[4]), window_ = static_cast<int>(h[5]), nf_ = static_cast<int>(h[7]);
+        age_.assign(static_cast<std::size_t>(2 * window_ + 8), 0.0f);
+        for (int m = 0; m < 2 * window_; ++m) age_[static_cast<std::size_t>(m)] = static_cast<float>(m < window_ ? window_ - 1 - m : 2 * window_ - 1 - m);
         const std::size_t n = n_ = h[6];
         w_.reset(static_cast<float*>(std::aligned_alloc(64, ((n * 4 + 63) / 64) * 64)));
         if (!f.read(reinterpret_cast<char*>(w_.get()), static_cast<std::streamsize>(n * 4)))
@@ -98,6 +100,7 @@ class EventTransformer {
     template <bool Avx>
     void step(State& s, const EventToken& t, float* forecast, float* gen) const {
         const int d = d_;
+        if (heads_ > 8) throw std::runtime_error("event transformer: more than 8 heads");
         float h[kMaxD], x[kMaxD], qkv[3 * kMaxD], y[kMaxD], a[kMaxH], sc[kMaxW];
         for (int i = 0; i < d; ++i)
             h[i] = e_type_[t.type * d + i] + e_side_[t.side * d + i] + e_dist_[t.dist * d + i] +
@@ -118,19 +121,12 @@ class EventTransformer {
             const int wt = window_ + 8;
             float* Kt = s.kt.data() + static_cast<std::size_t>(l * d * wt);
             for (int i = 0; i < d; ++i) Kt[i * wt + slot] = qkv[d + i];
+            if constexpr (Avx) attend_avx2(qkv, Kt, wt, dh, span, slot, V, d, scale, y);
+            else
             for (int hd = 0; hd < heads_; ++hd) {
                 const float* q = qkv + hd * dh;
                 float mx = -INFINITY;
-                if constexpr (Avx) {
-                    // Valid slots are 0..span-1 (the ring is full, or has not wrapped yet).
-                    alignas(32) float raw[kMaxW + 8];
-                    scores_avx2(q, Kt + hd * dh * wt, wt, dh, span, raw);
-                    // Oldest first: the ring from `first` to its end, then from slot 0.
-                    const int run1 = std::min(span, window_ - first);
-                    bias_avx2(raw + first, sc, run1, static_cast<float>(span - 1), scale, slopes_[hd], mx);
-                    bias_avx2(raw, sc + run1, span - run1, static_cast<float>(span - 1 - run1), scale,
-                              slopes_[hd], mx);
-                } else {
+                {
                     // Oldest first, the order of the training mask's row, for the same rounding.
                     for (int j = 0, sl = first; j < span; ++j, sl = sl + 1 == window_ ? 0 : sl + 1) {
                         const int age = span - 1 - j;
@@ -138,17 +134,12 @@ class EventTransformer {
                         mx = std::max(mx, sc[j]);
                     }
                 }
-                if constexpr (Avx) {
-                    const float inv = softmax_avx2(sc, span, mx);
-                    accumulate_avx2(sc, inv, V, first, span, d, hd * dh, dh, y + hd * dh);
-                } else {
-                    float sum = 0;
-                    for (int j = 0; j < span; ++j) sum += (sc[j] = std::exp(sc[j] - mx));
-                    for (int i = 0; i < dh; ++i) y[hd * dh + i] = 0;
-                    for (int j = 0, sl = first; j < span; ++j, sl = sl + 1 == window_ ? 0 : sl + 1) {
-                        const float pj = sc[j] / sum;
-                        for (int i = 0; i < dh; ++i) y[hd * dh + i] += pj * V[sl * d + hd * dh + i];
-                    }
+                float sum = 0;
+                for (int j = 0; j < span; ++j) sum += (sc[j] = std::exp(sc[j] - mx));
+                for (int i = 0; i < dh; ++i) y[hd * dh + i] = 0;
+                for (int j = 0, sl = first; j < span; ++j, sl = sl + 1 == window_ ? 0 : sl + 1) {
+                    const float pj = sc[j] / sum;
+                    for (int i = 0; i < dh; ++i) y[hd * dh + i] += pj * V[sl * d + hd * dh + i];
                 }
             }
             mv<Avx>(L.o, y, x);
@@ -248,22 +239,6 @@ class EventTransformer {
         for (int i = 0; i < n; i += 8)
             _mm256_storeu_ps(out + i, _mm256_mul_ps(_mm256_mul_ps(_mm256_loadu_ps(x + i), r), _mm256_loadu_ps(w + i)));
     }
-    // Unnormalized softmax of sc[0..n) in place, returning 1 / sum; lanes past n are padded
-    // with -inf.
-    __attribute__((target("avx2,fma"))) static float softmax_avx2(float* sc, int n, float mx) {
-        const int n8 = (n + 7) & ~7;
-        for (int j = n; j < n8; ++j) sc[j] = -INFINITY;
-        __m256 acc = _mm256_setzero_ps();
-        const __m256 m = _mm256_set1_ps(mx);
-        for (int j = 0; j < n8; j += 8) {
-            const __m256 e = exp_avx2(_mm256_sub_ps(_mm256_loadu_ps(sc + j), m));
-            _mm256_storeu_ps(sc + j, e);
-            acc = _mm256_add_ps(acc, e);
-        }
-        const __m128 s4 = _mm_add_ps(_mm256_castps256_ps128(acc), _mm256_extractf128_ps(acc, 1));
-        const __m128 s2 = _mm_add_ps(s4, _mm_movehl_ps(s4, s4));
-        return 1.0f / _mm_cvtss_f32(_mm_add_ss(s2, _mm_shuffle_ps(s2, s2, 1)));
-    }
     // raw[sl] = q . K[sl] for slots 0..n-1, eight slots per vector from the transposed keys;
     // four blocks at a time so the FMA chains overlap instead of waiting on each other.
     __attribute__((target("avx2,fma"))) static void scores_avx2(const float* q, const float* Kt, int wt, int dh,
@@ -290,51 +265,68 @@ class EventTransformer {
             _mm256_store_ps(raw + j, acc);
         }
     }
-    // dst[k] = src[k] * scale - slope * (age0 - k), and the running maximum of dst.
-    __attribute__((target("avx2,fma"))) static void bias_avx2(const float* src, float* dst, int n, float age0,
-                                                              float scale, float slope, float& mx) {
-        const __m256 vs = _mm256_set1_ps(scale), vsl = _mm256_set1_ps(slope);
-        const __m256 step = _mm256_setr_ps(0, 1, 2, 3, 4, 5, 6, 7);
-        __m256 vmx = _mm256_set1_ps(mx);
-        int k = 0;
-        for (; k + 8 <= n; k += 8) {
-            const __m256 age = _mm256_sub_ps(_mm256_set1_ps(age0 - static_cast<float>(k)), step);
-            const __m256 v = _mm256_sub_ps(_mm256_mul_ps(_mm256_loadu_ps(src + k), vs), _mm256_mul_ps(vsl, age));
-            _mm256_storeu_ps(dst + k, v);
-            vmx = _mm256_max_ps(vmx, v);
+    // Attention in ring-slot order: softmax and the weighted sum do not depend on the order of
+    // the keys, so the ring is never unrolled. The ALiBi age of slot j is read from a rotated
+    // table, age_[window - 1 - slot + j], and slots past `span` (before the ring has filled) are
+    // masked to -inf. Each phase runs over all heads before the next starts, so the heads'
+    // dependency chains overlap instead of queueing one behind another.
+    __attribute__((target("avx2,fma"))) void attend_avx2(const float* qkv, const float* Kt, int wt, int dh, int span,
+                                                         int slot, const float* V, int d, float scale,
+                                                         float* y) const {
+        constexpr int kHeads = 8;
+        alignas(32) float sc[kHeads][kMaxW + 8];
+        float inv[kHeads];
+        const int heads = heads_, n8 = (span + 7) & ~7;
+        for (int hd = 0; hd < heads; ++hd) scores_avx2(qkv + hd * dh, Kt + hd * dh * wt, wt, dh, span, sc[hd]);
+        const float* age = age_.data() + (window_ - 1 - slot);
+        const __m256 vs = _mm256_set1_ps(scale), ninf = _mm256_set1_ps(-INFINITY);
+        const __m256 lane0 = _mm256_setr_ps(0, 1, 2, 3, 4, 5, 6, 7), vspan = _mm256_set1_ps(static_cast<float>(span));
+        __m256 mx[kHeads];
+        for (int hd = 0; hd < heads; ++hd) {
+            const __m256 vsl = _mm256_set1_ps(slopes_[hd]);
+            __m256 vmx = ninf;
+            for (int j = 0; j < n8; j += 8) {
+                __m256 v = _mm256_sub_ps(_mm256_mul_ps(_mm256_load_ps(sc[hd] + j), vs),
+                                         _mm256_mul_ps(vsl, _mm256_loadu_ps(age + j)));
+                if (j + 8 > span) {
+                    const __m256 lane = _mm256_add_ps(_mm256_set1_ps(static_cast<float>(j)), lane0);
+                    v = _mm256_blendv_ps(ninf, v, _mm256_cmp_ps(lane, vspan, _CMP_LT_OQ));
+                }
+                _mm256_store_ps(sc[hd] + j, v);
+                vmx = _mm256_max_ps(vmx, v);
+            }
+            __m128 m4 = _mm_max_ps(_mm256_castps256_ps128(vmx), _mm256_extractf128_ps(vmx, 1));
+            m4 = _mm_max_ps(m4, _mm_movehl_ps(m4, m4));
+            mx[hd] = _mm256_broadcastss_ps(_mm_max_ss(m4, _mm_shuffle_ps(m4, m4, 1)));
         }
-        const __m128 m4 = _mm_max_ps(_mm256_castps256_ps128(vmx), _mm256_extractf128_ps(vmx, 1));
-        const __m128 m2 = _mm_max_ps(m4, _mm_movehl_ps(m4, m4));
-        mx = _mm_cvtss_f32(_mm_max_ss(m2, _mm_shuffle_ps(m2, m2, 1)));
-        for (; k < n; ++k) {
-            dst[k] = src[k] * scale - slope * (age0 - static_cast<float>(k));
-            mx = std::max(mx, dst[k]);
+        for (int hd = 0; hd < heads; ++hd) {
+            __m256 acc = _mm256_setzero_ps();
+            for (int j = 0; j < n8; j += 8) {
+                const __m256 e = exp_avx2(_mm256_sub_ps(_mm256_load_ps(sc[hd] + j), mx[hd]));
+                _mm256_store_ps(sc[hd] + j, e);
+                acc = _mm256_add_ps(acc, e);
+            }
+            __m128 s4 = _mm_add_ps(_mm256_castps256_ps128(acc), _mm256_extractf128_ps(acc, 1));
+            s4 = _mm_add_ps(s4, _mm_movehl_ps(s4, s4));
+            inv[hd] = 1.0f / _mm_cvtss_f32(_mm_add_ss(s4, _mm_shuffle_ps(s4, s4, 1)));
         }
-    }
-    // y = inv * sum_j p[j] V[slot j], over the ring as two contiguous runs, with four partial
-    // sums per output block so consecutive FMAs do not depend on each other.
-    __attribute__((target("avx2,fma"))) void accumulate_avx2(const float* p, float inv, const float* V, int first,
-                                                             int span, int d, int off, int dh, float* y) const {
-        const int run1 = std::min(span, window_ - first);
-        for (int i = 0; i < dh; i += 8) {
-            __m256 a[4] = {_mm256_setzero_ps(), _mm256_setzero_ps(), _mm256_setzero_ps(), _mm256_setzero_ps()};
-            accumulate_run(p, V + first * d + off + i, run1, d, a);
-            accumulate_run(p + run1, V + off + i, span - run1, d, a);
-            const __m256 sum = _mm256_add_ps(_mm256_add_ps(a[0], a[1]), _mm256_add_ps(a[2], a[3]));
-            _mm256_storeu_ps(y + i, _mm256_mul_ps(sum, _mm256_set1_ps(inv)));
+        for (int hd = 0; hd < heads; ++hd) {
+            for (int i = 0; i < dh; i += 8) {
+                __m256 a0 = _mm256_setzero_ps(), a1 = a0, a2 = a0, a3 = a0;
+                const float* v = V + hd * dh + i;
+                const float* p = sc[hd];
+                int j = 0;
+                for (; j + 4 <= span; j += 4, v += 4 * d) {
+                    a0 = _mm256_fmadd_ps(_mm256_set1_ps(p[j]), _mm256_loadu_ps(v), a0);
+                    a1 = _mm256_fmadd_ps(_mm256_set1_ps(p[j + 1]), _mm256_loadu_ps(v + d), a1);
+                    a2 = _mm256_fmadd_ps(_mm256_set1_ps(p[j + 2]), _mm256_loadu_ps(v + 2 * d), a2);
+                    a3 = _mm256_fmadd_ps(_mm256_set1_ps(p[j + 3]), _mm256_loadu_ps(v + 3 * d), a3);
+                }
+                for (; j < span; ++j, v += d) a0 = _mm256_fmadd_ps(_mm256_set1_ps(p[j]), _mm256_loadu_ps(v), a0);
+                const __m256 sum = _mm256_add_ps(_mm256_add_ps(a0, a1), _mm256_add_ps(a2, a3));
+                _mm256_storeu_ps(y + hd * dh + i, _mm256_mul_ps(sum, _mm256_set1_ps(inv[hd])));
+            }
         }
-    }
-    __attribute__((target("avx2,fma"), always_inline)) static inline void accumulate_run(const float* p,
-                                                                                         const float* v, int n,
-                                                                                         int d, __m256* a) {
-        int j = 0;
-        for (; j + 4 <= n; j += 4, v += 4 * d) {
-            a[0] = _mm256_fmadd_ps(_mm256_set1_ps(p[j]), _mm256_loadu_ps(v), a[0]);
-            a[1] = _mm256_fmadd_ps(_mm256_set1_ps(p[j + 1]), _mm256_loadu_ps(v + d), a[1]);
-            a[2] = _mm256_fmadd_ps(_mm256_set1_ps(p[j + 2]), _mm256_loadu_ps(v + 2 * d), a[2]);
-            a[3] = _mm256_fmadd_ps(_mm256_set1_ps(p[j + 3]), _mm256_loadu_ps(v + 3 * d), a[3]);
-        }
-        for (; j < n; ++j, v += d) a[0] = _mm256_fmadd_ps(_mm256_set1_ps(p[j]), _mm256_loadu_ps(v), a[0]);
     }
     // GELU with tanh(z) = 1 - 2 / (exp(2z) + 1).
     __attribute__((target("avx2,fma"))) static void gelu_avx2(float* a, int n) {
@@ -411,6 +403,7 @@ class EventTransformer {
     std::unique_ptr<float, Free> w_;
     const float *e_type_, *e_side_, *e_dist_, *e_size_, *e_dt_w_, *e_dt_b_;
     std::vector<Layer> layer_;
+    std::vector<float> age_;  // age_[m] = window - 1 - m for m < window, then 2 window - 1 - m
     const float *norm_, *slopes_;
     Mat fh_, gh_;
 };
