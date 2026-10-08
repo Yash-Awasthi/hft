@@ -265,35 +265,25 @@ bool MergedReader::fill() {
         Sym& s = syms_[sym];
         std::uint64_t key = UINT64_MAX;
         while (!s.bufs.empty()) {
-            const std::vector<std::uint8_t>& buf = s.bufs.front();
-            const std::uint8_t* const base = buf.data();
-            const std::size_t size = buf.size();
-            std::size_t pos = s.pos;
-            bool reached_end = false;
-            while (pos < size) {
-                if (size - pos < kRecordHeader) throw std::runtime_error("corrupt record");
-                std::uint64_t seq;
-                std::uint16_t len;
-                std::memcpy(&seq, base + pos, 8);
-                std::memcpy(&len, base + pos + 8, 2);
-                if (size - pos - kRecordHeader < len) throw std::runtime_error("corrupt record");
-                if (seq >= end) {
-                    key = seq;
-                    reached_end = true;
-                    break;
-                }
-                const std::uint64_t i = seq - base_;
-                if (seq < base_ || bits_[i / 64] >> (i % 64) & 1)
-                    throw std::runtime_error("sequence numbers not increasing");
-                slots_[i] = {base + pos + kRecordHeader, len, s.locate, sym};
-                bits_[i / 64] |= std::uint64_t{1} << (i % 64);
-                pos += kRecordHeader + len;
+            if (s.pos >= s.bufs.front().size()) {
+                retired_.push_back(std::move(s.bufs.front()));
+                s.bufs.pop_front();
+                s.pos = 0;
+                continue;
             }
-            s.pos = pos;
-            if (reached_end) break;
-            retired_.push_back(std::move(s.bufs.front()));
-            s.bufs.pop_front();
-            s.pos = 0;
+            Record rec{};
+            if (!parse_record(s.bufs.front(), s.pos, rec))
+                throw std::runtime_error("corrupt record");
+            if (rec.seq >= end) {
+                key = rec.seq;
+                break;
+            }
+            const std::uint64_t i = rec.seq - base_;
+            if (rec.seq < base_ || bits_[i / 64] >> (i % 64) & 1)
+                throw std::runtime_error("sequence numbers not increasing");
+            slots_[i] = {rec.data, rec.len, sym};
+            bits_[i / 64] |= std::uint64_t{1} << (i % 64);
+            s.pos += kRecordHeader + rec.len;
         }
         if (s.bufs.empty() && s.chunk < s.idx.size()) key = s.idx[s.chunk].first_seq;
         if (key == UINT64_MAX) {
@@ -320,7 +310,7 @@ bool MergedReader::next(Record& out, std::uint16_t& locate) {
     cur_ &= cur_ - 1;
     const Slot& sl = slots_[i];
     out = {base_ + i, sl.data, sl.len};
-    locate = sl.locate;
+    locate = syms_[sl.sym].locate;
     return true;
 }
 
