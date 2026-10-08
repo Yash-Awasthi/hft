@@ -32,6 +32,7 @@
 #include "book/tick_book.hpp"
 #include "core/pool.hpp"
 #include "core/tsc.hpp"
+#include "data/lookahead.hpp"
 #include "data/store.hpp"
 #include "feed/itch.hpp"
 
@@ -338,28 +339,51 @@ void book_mode(const std::filesystem::path& dir, const std::vector<std::uint16_t
 }
 
 // End to end on one replay thread plus the read-ahead thread: read, decode, apply, BBO.
-void replay(const std::filesystem::path& dir, const std::vector<std::uint16_t>& locs, int reps,
-            unsigned threads) {
+// Look is the lookahead depth (0 reads the merged stream directly): the ID slot of each
+// message is prefetched on entry and its order record when it is half way to the front.
+template <std::size_t Look>
+void replay_run(const std::filesystem::path& dir, const std::vector<std::uint16_t>& locs, int reps,
+                unsigned threads) {
     using Tick = book::TickBook<book::LinearMap>;
-    const std::string variant = threads > 1 ? "tick-t" + std::to_string(threads) : "tick";
+    std::string variant = threads > 1 ? "tick-t" + std::to_string(threads) : "tick";
+    if (Look) variant += "-look" + std::to_string(Look);
     for (int r = 0; r <= reps; ++r) {
         const auto t0 = std::chrono::steady_clock::now();
         std::vector<std::unique_ptr<Tick>> books;
         std::vector<book::ItchApply<Tick>> ap;
         for (std::size_t i = 0; i < locs.size(); ++i)
-            books.push_back(std::make_unique<Tick>(1 << 16));
+            books.push_back(std::make_unique<Tick>(std::getenv("HFT_BIGPOOL") ? (1 << 18) : (1 << 16)));
         for (auto& b : books) ap.push_back({*b});
         data::MergedReader rd(dir, locs, 64, threads);
         data::Record rec{};
         std::uint16_t loc;
         std::uint64_t n = 0, bbo = 0, errors = 0;
-        while (rd.next(rec, loc)) {
-            const auto s = static_cast<std::size_t>(
-                std::lower_bound(locs.begin(), locs.end(), loc) - locs.begin());
+        // Locate is 16 bits, so a table replaces a search over the symbols per message.
+        std::vector<std::uint16_t> slot_table(65536, 0);
+        for (std::size_t i = 0; i < locs.size(); ++i) slot_table[locs[i]] = static_cast<std::uint16_t>(i);
+        auto slot_of = [&](std::uint16_t l) { return static_cast<std::uint32_t>(slot_table[l]); };
+        auto step = [&](std::size_t s) {
             ap[s].seq = rec.seq;
             itch::dispatch(rec.data, rec.len, ap[s]);
             bbo += books[s]->bbo().bid_px;
             ++n;
+        };
+        if constexpr (Look == 0) {
+            while (rd.next(rec, loc)) step(slot_of(loc));
+        } else {
+            data::Lookahead<Look> la(rd);
+            std::uint32_t tag;
+            auto warm = [&](std::uint16_t l, const std::uint8_t* m, std::size_t len) {
+                const std::uint32_t s = slot_of(l);
+                const auto refs = data::itch_refs(m, len);
+                if (refs.first) books[s]->prefetch_id(refs.first);
+                if (refs.second) books[s]->prefetch_id(refs.second);
+                return s;
+            };
+            auto late = [&](std::uint32_t s, const std::uint8_t* m, std::size_t len) {
+                if (const auto refs = data::itch_refs(m, len); refs.first) books[s]->prefetch_order(refs.first);
+            };
+            while (la.next(rec, loc, tag, warm, late)) step(tag);
         }
         for (auto& a : ap) errors += a.stats.errors;
         const double s = secs(t0, std::chrono::steady_clock::now());
@@ -369,7 +393,21 @@ void replay(const std::filesystem::path& dir, const std::vector<std::uint16_t>& 
     }
 }
 
+void replay(const std::filesystem::path& dir, const std::vector<std::uint16_t>& locs, int reps,
+            unsigned threads) {
+    const char* e = std::getenv("HFT_LOOKAHEAD");
+    switch (e ? std::atoi(e) : 0) {
+        case 4: return replay_run<4>(dir, locs, reps, threads);
+        case 8: return replay_run<8>(dir, locs, reps, threads);
+        case 16: return replay_run<16>(dir, locs, reps, threads);
+        case 32: return replay_run<32>(dir, locs, reps, threads);
+        case 64: return replay_run<64>(dir, locs, reps, threads);
+        default: return replay_run<0>(dir, locs, reps, threads);
+    }
+}
+
 }  // namespace
+
 
 int main(int argc, char** argv) {
     if (argc < 3) {
