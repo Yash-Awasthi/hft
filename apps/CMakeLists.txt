@@ -27,3 +27,6 @@ target_link_libraries(feature_stream PRIVATE hft_core hft_data)
 
 add_executable(reinsert reinsert.cpp)
 target_link_libraries(reinsert PRIVATE hft_core hft_data)
+
+add_executable(transcode transcode.cpp)
+target_link_libraries(transcode PRIVATE hft_core hft_data)
