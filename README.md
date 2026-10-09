@@ -102,6 +102,24 @@ What moved the numbers:
 - **Transformer.** Score and attention loops rebuilt around independent FMA chains, plus
   AVX2 for the remaining scalar loops: 23 to 30% off the step.
 
+A later pass (replay lookahead, transformer kernels, backtest hot paths, LZ4 store, per-symbol
+replay) was timed back to back against the previous `main`, so these pairs are comparable
+with each other but not with the table above, whose clock drifted between sessions:
+
+| Path | Before | After |
+|---|---|---|
+| Full-day replay, 50 stocks, 147.6M events | 24.1 s | 17.2 s |
+| Transformer step, test fixture model | 2,090 ns | 1,620 ns |
+| Transformer step, small model | 2,081 ns | 1,335 ns |
+| NVDA backtest day, `naive` | 243 s | 43 s |
+| NVDA backtest day, `dp_signal` | 53 s | 36 s |
+| `book_replay`, all 12,076 symbols | 40.8 s | 7.5 s |
+| `checkpoint` write / verify | 4.7 s / 2.4 s | 0.92 s / 0.66 s |
+
+The merged-feed replay lookahead is used only by `bench/book_study.cpp`; the production
+replays are per symbol. The shared clock decay in the feature engine changes features in the
+last bits, so research outputs regenerated after it can differ in the last digits.
+
 Book variants (`std::map`, Robin Hood and direct-mapped ID maps, AoS / SoA / hot-cold
 layouts, sorted vector, B-tree) are compared in
 [docs/results/ms2-book-study.md](docs/results/ms2-book-study.md), with instructions and
@@ -110,7 +128,7 @@ cache misses per event from Cachegrind.
 
 ## Tests
 
-The C++ suite has 216 GoogleTest and RapidCheck tests; 215 pass and one
+The C++ suite has 220 GoogleTest and RapidCheck tests; 219 pass and one
 (`PerfCounters.CountsInstructionsWhenAvailable`) skips where the machine exposes no hardware
 performance counters. Fifteen Python suites cover the research code against the built module.
 

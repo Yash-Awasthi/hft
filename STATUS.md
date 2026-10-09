@@ -67,6 +67,11 @@ task finishes or blocks.
 
 ## In progress
 
+- Second optimisation pass merged 2026-10-09 (PR #1): replay lookahead, transformer kernels,
+  backtest and exchange hot paths, incremental depth features, LZ4-HC store codec,
+  `transcode`, per-symbol replay on a thread pool. Same-session before/after in README
+  "Performance". Stores for the four December days exist as LZ4 copies; merged-stream hashes
+  match the zstd originals.
 - Optimisation pass done 2026-10-08 (sequence-window merge, parallel read-ahead, one ID
   probe per book operation, transformer step kernels), measured before/after at the
   baseline; targets revised on the result (DESIGN.md section 9, "Target revisions").
@@ -137,6 +142,9 @@ task finishes or blocks.
 | MS2 | Book update, 50 symbols | <= 85 / 400 ns (revised; was 30 / 150) | p50 79.6, p99 366.7 ns (baseline 81.0 / 366) | `book_study book:tick 50` |
 | MS2 | Instructions per event (Cachegrind, 10 symbols) | - | tick 257 -> 248 after one ID probe per operation; map 575 | `docs/results/ms2-book-study.md` |
 | MS2 | Full-day replay, 50 stocks | <= 60 s | 23.9 s, 2025-12-08 (baseline 25.9 s) | `book_study replay` |
+| MS2 | Second pass, same-session before/after | - | full-day replay 24.1 -> 17.2 s; `book_replay` all symbols 40.8 -> 7.5 s; `checkpoint` write 4.7 -> 0.92 s, verify 2.4 -> 0.66 s | README "Performance" |
+| MS6 | Second pass, NVDA backtest day | - | `naive` 243 -> 43 s; `dp_signal` 53 -> 36 s; totals identical | same |
+| MS9 | Second pass, transformer step | - | fixture 2,090 -> 1,620 ns; small 2,081 -> 1,335 ns | same |
 | MS3 | Fork, 10k orders | <= 100 us, >= 10 GB/s | 53.4 us, 16.0 GiB/s, 869 KB | `hft_bench --benchmark_filter=Fork` |
 | MS3 | Matching engine vs reference | identical events | RapidCheck, 100 sequences per run | `MatchingProp` |
 | MS3 | Determinism across compilers | golden hashes | equal on GCC 13, 15, Clang 18, 21 | `Fixture.*` |
