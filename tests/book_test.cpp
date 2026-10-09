@@ -3,7 +3,6 @@
 #include <random>
 #include <vector>
 
-#include "book/btree_book.hpp"
 #include "book/map_book.hpp"
 #include "book/tick_book.hpp"
 
@@ -20,7 +19,7 @@ class BookTest : public ::testing::Test {
 
 using Books = ::testing::Types<MapBook, TickBook<LinearMap>, TickBook<RobinHoodMap>,
                                TickBook<DirectMap<>>, TickBook<LinearMap, Aos>,
-                               TickBook<LinearMap, Soa>, SortedVecBook<>, BTreeBook<>>;
+                               TickBook<LinearMap, Soa>, SortedVecBook<>>;
 TYPED_TEST_SUITE(BookTest, Books);
 
 constexpr Side kB = Side::Buy;

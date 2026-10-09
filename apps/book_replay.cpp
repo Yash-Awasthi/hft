@@ -1,7 +1,7 @@
 // Replays symbols of a store through a book and reports per-symbol book statistics, a hash
 // of the BBO stream and invariant failures.
 // Usage: book_replay <store-dir> <book> [locate ...]   (no locate: every symbol)
-//   book: map | tick | tick-rh | tick-dm | tick-aos | tick-soa | tick-sv | btree
+//   book: map | tick | tick-rh | tick-dm | tick-aos | tick-soa | tick-sv
 // Env: CHECK_EVERY=N runs the full invariant check every N book events (default 0: off).
 //      THREADS=N replays N symbols at a time (default: all hardware threads); rows print in locate order.
 
@@ -17,7 +17,6 @@
 #include <thread>
 #include <vector>
 
-#include "book/btree_book.hpp"
 #include "book/itch_apply.hpp"
 #include "book/map_book.hpp"
 #include "book/tick_book.hpp"
@@ -150,7 +149,7 @@ int main(int argc, char** argv) {
         "locate symbol msgs book_msgs errors max_orders bbo_changes crossed locked "
         "max_cross_ms crossed_trading executed hidden cross check_fail bbo_hash\n");
     static const std::string_view kKinds[] = {"map", "tick", "tick-rh", "tick-dm",
-                                              "tick-aos", "tick-soa", "tick-sv", "btree"};
+                                              "tick-aos", "tick-soa", "tick-sv"};
     if (std::find(std::begin(kKinds), std::end(kKinds), kind) == std::end(kKinds)) {
         std::fprintf(stderr, "unknown book %s\n", argv[2]);
         return 2;
@@ -169,12 +168,8 @@ int main(int argc, char** argv) {
             r = replay<book::TickBook<book::LinearMap, book::Aos>>(dir, loc, check_every);
         else if (kind == "tick-soa")
             r = replay<book::TickBook<book::LinearMap, book::Soa>>(dir, loc, check_every);
-        else if (kind == "tick-sv")
-            r = replay<book::SortedVecBook<>>(dir, loc, check_every);
-        else if (kind == "btree")
-            r = replay<book::BTreeBook<>>(dir, loc, check_every);
         else
-            r = replay<book::BTreeBook<>>(dir, loc, check_every);
+            r = replay<book::SortedVecBook<>>(dir, loc, check_every);
         if (r.max_cross_ns > kPersistentCrossNs) ++r.check_failures;
         return r;
     };

@@ -1,5 +1,5 @@
 // Prints one canonical line per ITCH message of a BinaryFILE stream on stdin, for
-// field-level comparison with other parsers (research/compare_itchfeed.py).
+// field-level comparison with other parsers (archive/research/compare_itchfeed.py).
 // Usage: itch_dump <skip> <count> <slice-out>   writes the dumped messages to slice-out too.
 // Line: type|locate|tracking|timestamp|fields...; types this decoder leaves undecoded
 // (Y L V W K J h N O) print the header only.

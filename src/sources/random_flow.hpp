@@ -3,7 +3,7 @@
 // Synthetic, spec-valid ITCH 5.0 order flow for a few symbols: adds around a drifting mid,
 // partial and full executions, cancels, deletes and replaces, only ever against live
 // orders; bids stay below the mid and asks above it. Driven by Philox, so a seed gives the same bytes on every compiler. Used for test
-// fixtures; the queue-reactive AgentSource replaces it for research.
+// fixtures; the queue-reactive AgentSource replaces it for richer flow.
 
 #include <cstdint>
 #include <string>

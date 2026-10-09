@@ -28,7 +28,6 @@
 #include <thread>
 #include <vector>
 
-#include "book/btree_book.hpp"
 #include "book/itch_apply.hpp"
 #include "book/map_book.hpp"
 #include "book/tick_book.hpp"
@@ -300,7 +299,6 @@ void book_mode(const std::filesystem::path& dir, const std::vector<std::uint16_t
     using TickAos = book::TickBook<book::LinearMap, book::Aos>;
     using TickSoa = book::TickBook<book::LinearMap, book::Soa>;
     using SortedVec = book::SortedVecBook<>;
-    using BTree = book::BTreeBook<>;
     if (only.starts_with("book-cg:")) {
         const std::string_view v = only.substr(8);
         if (v == "map") book_cachegrind<book::MapBook>(ev, cap);
@@ -310,7 +308,6 @@ void book_mode(const std::filesystem::path& dir, const std::vector<std::uint16_t
         if (v == "tick-aos") book_cachegrind<TickAos>(ev, cap);
         if (v == "tick-soa") book_cachegrind<TickSoa>(ev, cap);
         if (v == "tick-sv") book_cachegrind<SortedVec>(ev, cap);
-        if (v == "btree") book_cachegrind<BTree>(ev, cap);
         if (v == "tick-4k") {
             PoolStats::huge_pages = false;
             book_cachegrind<Tick>(ev, cap);
@@ -332,7 +329,6 @@ void book_mode(const std::filesystem::path& dir, const std::vector<std::uint16_t
     if (want("tick-aos")) book_variant<TickAos>("tick-aos", ev, cap, reps, tpn, ovh);
     if (want("tick-soa")) book_variant<TickSoa>("tick-soa", ev, cap, reps, tpn, ovh);
     if (want("tick-sv")) book_variant<SortedVec>("tick-sv", ev, cap, reps, tpn, ovh);
-    if (want("btree")) book_variant<BTree>("btree", ev, cap, reps, tpn, ovh);
     if (want("tick-4k")) {
         PoolStats::huge_pages = false;
         book_variant<Tick>("tick-4k", ev, cap, reps, tpn, ovh);

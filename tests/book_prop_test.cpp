@@ -11,7 +11,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include "book/btree_book.hpp"
 #include "book/id_map.hpp"
 #include "book/level_radix.hpp"
 #include "book/map_book.hpp"
@@ -143,7 +142,7 @@ struct Arbitrary<Op> {
 
 RC_GTEST_PROP(BookProp, AllBooksMatchBaseline, (const std::vector<Op>& ops)) {
     run<TickBook<LinearMap>, TickBook<RobinHoodMap>, TickBook<DirectMap<16>>,
-        TickBook<LinearMap, Aos>, TickBook<LinearMap, Soa>, SortedVecBook<>, BTreeBook<>>(ops);
+        TickBook<LinearMap, Aos>, TickBook<LinearMap, Soa>, SortedVecBook<>>(ops);
 }
 
 template <class Map>

@@ -1,6 +1,6 @@
 {
   "name": "hft",
   "version": "0.0.0",
-  "dependencies": ["gtest", "benchmark", "zstd", "lz4", "zlib-ng", "rapidcheck", "hdr-histogram", "tlx", "tomlplusplus", "sqlite3"],
+  "dependencies": ["gtest", "benchmark", "zstd", "lz4", "zlib-ng", "rapidcheck", "hdr-histogram"],
   "builtin-baseline": "001713e802f5cf619a64461b918161be6a0634f0"
 }

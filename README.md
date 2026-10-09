@@ -2,63 +2,51 @@
 
 [![ci](https://github.com/Yash-Awasthi/hft/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Yash-Awasthi/hft/actions/workflows/ci.yml)
 
-An L3 market-making lab in C++23 that replays real Nasdaq TotalView-ITCH days through an
-order-by-order book, a deterministic matching engine and an in-loop AVX2 transformer.
+A low-latency trading system in C++23 with no framework underneath. It has two feeds:
 
-Full design and plan: [DESIGN.md](DESIGN.md); working log: [STATUS.md](STATUS.md).
+- **Nasdaq TotalView-ITCH**, replayed from disk through an order-by-order book, a
+  deterministic matching engine and an event-driven backtest.
+- **A live prediction-market exchange** (Polymarket's public order-book stream), read by a
+  hand-written TLS WebSocket client, recorded to disk and rebuilt into books.
+
+Plan and phases: [docs/ROADMAP.md](docs/ROADMAP.md); working log: [STATUS.md](STATUS.md).
+Studies from the earlier research phase (Python, signal and regime reports, transformer
+forecaster, pre-registration) are kept out of the build under [archive/](archive/).
 
 ## Architecture
 
 ```
- ITCH day (.gz) ──ingest──> per-symbol zstd store + index + book checkpoints
-                                   │
-                    MergedReader (parallel read-ahead, feed order restored)
-                                   │
-          ┌──────── Scheduler: (time, kind, insertion) ────────┐
-          │                                                     │
-   L3 book per symbol  <──  ReplayExchange: virtual orders  <── Strategy
-   (TickBook)               in the real queues, fill rules      features -> model -> policy
-          │                                                     -> risk
+ ITCH day (.gz) --ingest--> per-symbol LZ4/zstd store + index + book checkpoints
+                                  |
+                   per-symbol replay on a thread pool / merged reader
+                                  |
+   L3 book per symbol (TickBook) <- ReplayExchange: virtual orders <- strategy
+                                  |                                   (AS / GLFT, DP)
    MatchingEngine (price-time, IOC / post-only, STP, fees, half-penny tick)
-          │
+                                  |
    Accounting (integer micro-dollars, PnL identity checked every event)
-          │
-   Experiment layer: TOML configs, process pool, SQLite registry, locked test days
-          │
-   nanobind module `hftpy` -> Python research (research/)
+
+ Polymarket WS --TLS--> pm_record --> hourly zstd JSONL --> pm_stats / pm_mm
 ```
 
 | Component | Where | Notes |
 |---|---|---|
 | ITCH decoder | `src/feed/itch.hpp` | Zero-copy, fuzzed (`fuzz/`) |
-| Store | `src/data/store.*` | zstd chunks per symbol, global sequence numbers; merged back in feed order by a sequence-window merge with N decompression threads |
+| Store | `src/data/store.*` | LZ4-HC or zstd chunks per symbol, global sequence numbers, sequence-window merge with N decompression threads |
 | Book | `src/book/tick_book.hpp` | 2,048-tick window with a two-level bitmap, radix tree for deep levels, off-grid array; hot/cold order pools addressed by 32-bit index; open-addressing order-ID map |
 | Matching engine | `src/engine/matching.hpp` | Price-time; property-tested against a naive reference |
 | Replay exchange | `src/engine/replay_exchange.hpp` | Virtual orders in real queues; queue, trade-through and hidden-print fill rules |
-| Backtest | `src/backtest/` | Event-driven; zero, random, foresight, naive, Avellaneda-Stoikov (GLFT), DP and DP-with-signal strategies |
-| Transformer step | `src/strategy/event_transformer.hpp` | Hand-written AVX2 float32 kernel, matched against PyTorch |
-| Python | `bindings/hftpy.cpp`, `research/` | Features, fills, quoting, regime, impact, validity studies |
+| Backtest | `src/backtest/` | Event-driven; zero, random, foresight, naive, Avellaneda-Stoikov (GLFT), DP strategies |
+| Network | `src/net/` | TLS socket (OpenSSL for the cipher layer only), HTTP/1.1 GET, WebSocket framing, SHA-1, base64, JSON reader |
+| Prediction markets | `src/pm/`, `apps/pm_*.cpp` | Recorder, book rebuild, logit Avellaneda-Stoikov maker |
 
 Every piece of engine state lives in index-addressed pools, so a book or engine fork is a
-copy of the used part of each pool with no pointer fix-up.
+copy of the used part of each pool with no pointer fix-up. Replay is single-threaded and
+deterministic per symbol; zstd/LZ4 chunks are decompressed ahead of it and handed over in
+sequence order, so the merged stream stays byte-identical to the download.
 
-**Threads.** Replay is single-threaded and deterministic: one thread merges the symbols back
-into feed order, decodes, updates the books and runs the strategy. Zstd chunks are
-decompressed ahead of it on N read-ahead threads and handed over strictly in sequence order,
-so the merged stream stays byte-identical to the download. Parameter sweeps run whole
-replays in parallel in a process pool.
-
-**Book.** Price levels live in a 2,048-tick window around the mid with a two-level bitmap of
-non-empty levels (the next level is one `tzcnt` / `lzcnt` per word); deeper levels go to a
-radix tree and off-grid prices to a separate array. Orders are split into 16-byte hot and
-24-byte cold records, and order IDs resolve through an open-addressing map with 8-byte
-slots, probed once per operation.
-
-**Transformer.** A small event transformer (d_model 24, 2 layers, 3 heads, sliding window
-64 with an ALiBi bias, 10,618 parameters, 41.5 KB in float32) forecasts short-horizon price
-moves from the event stream. The step is a hand-written AVX2 kernel: keys stored transposed
-so scores take 8 window positions per FMA, independent FMA chains in the score and
-attention loops, and a scalar reference path for parity checks.
+Third-party code at run time: zstd, LZ4 and zlib-ng for storage, OpenSSL for TLS.
+GoogleTest, RapidCheck, Google Benchmark and HdrHistogram are used by tests and benchmarks only.
 
 ## Performance
 
@@ -71,7 +59,7 @@ Targets were revised once, after the baseline and one optimisation pass. The ori
 targets were set from runs with turbo on (about 4.7 GHz); the baseline fixes the clock at
 about 2.4 GHz so before/after comparisons are stable, which roughly doubles every time figure
 for the same cycles. Old and new targets with the reason for each are in the revision record,
-[DESIGN.md section 9, "Target revisions"](DESIGN.md#target-revisions).
+[archive/docs/DESIGN.md section 9](archive/docs/DESIGN.md#target-revisions).
 
 | Path | Target | Baseline | Now | Cycles (now) | Source |
 |---|---|---|---|---|---|
@@ -81,13 +69,9 @@ for the same cycles. Old and new targets with the reason for each are in the rev
 | Read + decode, 50 symbols | ≥ 30M msg/s | 17.8M | 31.6M (two decompression threads) | 74 per message, decode thread alone (32.3M) | [ms2](docs/results/ms2-book-study.md) |
 | Full-day replay, 50 stocks, one replay thread | ≤ 60 s | 25.9 s | 23.9 s | | [ms2](docs/results/ms2-book-study.md) |
 | Fork, 10k orders | ≤ 100 µs, ≥ 10 GB/s | 53.4 µs, 16.0 GiB/s | 46.9 µs, 17.2 GiB/s (one book; 50 books 4.95 ms by copy, 1.40 ms by process `fork()`) | | [ms2](docs/results/ms2-book-study.md) |
-| Transformer forecast step, small model, AVX2 | < 2 µs | 2,786 ns | 1,975 ns | | [ms9](docs/results/ms9-transformer.md) |
-| Transformer full step, small model, AVX2 | reported, no target | 2,935 ns | 2,140 ns | | [ms9](docs/results/ms9-transformer.md) |
-| Transformer full step, base model, AVX2 | reported, no target | 3,435 ns | 2,545 ns | | [ms9](docs/results/ms9-transformer.md) |
 
 The single-symbol p99 moves between runs (152 ns at the baseline, 175 ns in one later run),
-so it is given as the 95% interval after the optimisation pass; the median is stable. The
-base model has twice the parameters of the small one and is reported beside it.
+so it is given as the 95% interval after the optimisation pass; the median is stable.
 
 What moved the numbers:
 
@@ -99,152 +83,88 @@ What moved the numbers:
   18.1M to 31.6M msg/s with two threads.
 - **Book.** One order-ID probe per operation instead of two to four, keeping the hash table
   image identical so stored checkpoints still verify: 7.5% off the single-symbol batch cost.
-- **Transformer.** Score and attention loops rebuilt around independent FMA chains, plus
-  AVX2 for the remaining scalar loops: 23 to 30% off the step.
 
-A later pass (replay lookahead, transformer kernels, backtest hot paths, LZ4 store, per-symbol
-replay) was timed back to back against the previous `main`, so these pairs are comparable
-with each other but not with the table above, whose clock drifted between sessions:
+A later pass (replay lookahead, backtest hot paths, LZ4 store, per-symbol replay) was timed
+back to back against the previous `main`, so these pairs are comparable with each other but not with the table above, whose clock drifted between sessions:
 
 | Path | Before | After |
 |---|---|---|
 | Full-day replay, 50 stocks, 147.6M events | 24.1 s | 17.2 s |
-| Transformer step, test fixture model | 2,090 ns | 1,620 ns |
-| Transformer step, small model | 2,081 ns | 1,335 ns |
-| NVDA backtest day, `naive` | 243 s | 43 s |
-| NVDA backtest day, `dp_signal` | 53 s | 36 s |
 | `book_replay`, all 12,076 symbols | 40.8 s | 7.5 s |
 | `checkpoint` write / verify | 4.7 s / 2.4 s | 0.92 s / 0.66 s |
 
 The merged-feed replay lookahead is used only by `bench/book_study.cpp`; the production
-replays are per symbol. The shared clock decay in the feature engine changes features in the
-last bits, so research outputs regenerated after it can differ in the last digits.
+replays are per symbol.
+
 Profile-guided build (`pgo-gen`, run `book_study replay` and `replay-sym`, then `pgo-use`): per-symbol
 replay of the 50 busiest symbols 11.7 s to 10.6 s (-10%, two runs each, one thread); the merged
 replay is unchanged within noise. A lookahead prefetch on the per-symbol path was slower
 (10.5 s to 11.7 s) and was dropped.
 
-Book variants (`std::map`, Robin Hood and direct-mapped ID maps, AoS / SoA / hot-cold
-layouts, sorted vector, B-tree) are compared in
-[docs/results/ms2-book-study.md](docs/results/ms2-book-study.md), with instructions and
-cache misses per event from Cachegrind.
-
-
 ## Tests
 
-The C++ suite has 220 GoogleTest and RapidCheck tests; 219 pass and one
+`ctest` runs about 215 GoogleTest and RapidCheck tests; one
 (`PerfCounters.CountsInstructionsWhenAvailable`) skips where the machine exposes no hardware
-performance counters. Fifteen Python suites cover the research code against the built module.
+performance counters.
 
-- **Golden hashes.** A synthetic fixture is regenerated byte for byte, and its golden BBO
-  and matching-engine hashes are equal under GCC 13 / 15 and Clang 18 / 21.
-- **PyTorch parity.** The AVX2 and scalar transformer kernels are checked against PyTorch:
-  on 200,000 INTC validation-day events with trained weights the maximum absolute logit
-  error is 1.4e-5 (small model) and 7.6e-6 (base), with forecast decisions equal on 100% of
-  events. A golden test in CI (`EventTransformer.MatchesPyTorchAndAgreesOnDecisions`)
-  requires error below 2e-5 and identical decisions on both paths.
-- Decoder fields identical to the third-party itchfeed parser on 12M messages; merged store
-  stream byte-identical to the decompressed download (SHA-256).
-- Seven book variants give the same BBO stream as `std::map` on full days (353M and 650M
-  messages), and an independent Python reference book agrees on 201 sampled symbols.
-- Invariants checked on every event of 255M book events; zero heap allocations in steady
-  state (`alloc_test`); checkpoints replay to byte-identical state.
-- Matching engine against a naive reference engine (RapidCheck).
-- Feature pipeline: batch equals streaming bit for bit, and features are unchanged when the
-  future is perturbed (leakage test).
-- Real orders re-inserted as virtual orders receive the same executions (96.7% under the
-  queue rule, 99.6% conservative).
+- A synthetic fixture is regenerated byte for byte; its golden BBO and matching-engine hashes
+  are equal under GCC 13 / 15 and Clang 18 / 21.
+- Decoder fields are identical to the third-party itchfeed parser on 12M messages; the merged
+  store stream is byte-identical to the decompressed download (SHA-256).
+- The tick book gives the same BBO stream as `std::map` on full days (353M and 650M messages).
+- Invariants are checked on every event of 255M book events; there are zero heap allocations in
+  steady state (`alloc_test`); checkpoints replay to byte-identical state.
+- The matching engine is checked against a naive reference engine (RapidCheck).
+- WebSocket framing, SHA-1, base64 and JSON have known-answer tests.
 
-```
-ctest --test-dir build/debug --output-on-failure      # C++ (GoogleTest, RapidCheck)
-python research/tests/test_backtests.py               # one of 15 Python suites
-```
-
-## CI
-
-GitHub Actions (`.github/workflows/ci.yml`) builds and tests GCC and Clang across the
-`debug`, `release`, `asan`, `ubsan` and `tsan` presets, runs the benchmarks once as a smoke
-test, fuzzes the decoder for 30 s, and runs the Python suites against the built module.
-`scripts/nightly.sh` holds the full-day checks, for a self-hosted runner (not yet registered).
+CI (`.github/workflows/ci.yml`) builds and tests GCC and Clang across the `debug`,
+`release`, `asan`, `ubsan` and `tsan` presets, runs the benchmarks once as a smoke test
+and fuzzes the decoder for 30 s.
 
 ## Build and run
 
-Requires CMake, Ninja, a C++23 compiler, OpenSSL development files (only the recorder uses them)
-and `VCPKG_ROOT` pointing at a vcpkg checkout.
+Requires CMake, Ninja, a C++23 compiler, OpenSSL development files and `VCPKG_ROOT` pointing
+at a vcpkg checkout.
 
 ```
 cmake --preset release
 cmake --build build/release
-build/release/tests/hft_tests
+ctest --test-dir build/release
 ```
 
 Presets: `debug`, `release`, `asan`, `ubsan`, `tsan`, `fuzz`, `pgo-gen`, `pgo-use`.
 
-Day files are listed in `configs/splits.toml`. Download, verify and ingest one day into the
-per-symbol store with:
+Ingest one ITCH day into a per-symbol store (download, verify, ingest):
 
 ```
 scripts/ingest_day.sh S121225-v50.txt.gz
-```
-
-`ingest <store-dir> <day.gz> [--codec lz4|zstd]` decompresses in-process, checks the gzip CRC
-and records the SHA-256 of the download in `<store-dir>/source.sha256`. Chunks are LZ4-HC by
-default: 3.5 times faster to decompress than zstd for 11% more disk, and one read-ahead thread
-keeps up with the replay. A store is read in whichever codec its files use (`.lz4` or `.zst`).
-Ingesting a full day with LZ4-HC takes about ten minutes. Then:
-
-```
 store_cat <store> [threads] | sha256sum          # merged stream, equals the download
 book_replay <store> tick                         # BBO hash and invariants, every symbol (THREADS=N)
-checkpoint <store> [--verify]                    # write or verify book checkpoints (THREADS=N)
+checkpoint <store> [--verify]                    # write or verify book checkpoints
 book_study <store> book 50 10                    # book update latency, 50 busiest symbols
-book_study <store> replay 50 10 [threads]        # full-day replay, symbols merged in feed order
-book_study <store> replay-sym 50 10 [threads]    # the same books, one symbol at a time on a pool
-python research/backtests.py <py-build> --name <sweep> --days <YYYY-MM-DD>...
+book_study <store> replay-sym 50 10 [threads]    # full-day replay, one symbol at a time on a pool
 ```
 
-`research/count_itch.c` is an independent message counter used to cross-check the decoder.
+`ingest <store-dir> <day.gz> [--codec lz4|zstd]` checks the gzip CRC and records the SHA-256
+of the download. LZ4-HC decompresses 3.5 times faster than zstd for 11% more disk.
 
 ## Prediction markets
 
-`pm_record` stores the public order-book stream of a prediction-market exchange: a hand-written
-WebSocket client (framing, SHA-1, base64, a small JSON reader; OpenSSL carries only the TLS
-bytes) writes one line per message with the receive time to hourly zstd files, picks the
-markets with the most volume per tag, reconnects with backoff, logs every gap and stops at a
-size cap. `scripts/pm_supervise.sh <dir>` restarts it after a crash; `status.json` in the
-record directory holds message counts and the age of the last message per connection.
+`pm_record` stores the public order-book stream: one line per message with the receive time,
+in hourly zstd files. It picks the markets with the most volume per tag, reconnects with
+backoff, logs every gap and stops at a size cap. `scripts/pm_supervise.sh <dir>` restarts it
+after a crash; `status.json` in the record directory holds message counts, reconnects and the
+age of the last message per connection.
 
 ```
 pm_record --out data/pm --cap-gb 50 --per-tag 8
 pm_stats data/pm > tokens.tsv     # per-token book rebuild: spread, depth, trades, consistency
 pm_mm data/pm > mm.tsv            # logit Avellaneda-Stoikov maker on the recorded books
-scripts/showcase.sh data/pm       # static results page in site/
 ```
 
-`pm_stats` rebuilds each outcome's book from snapshots and deltas and checks it against the
-exchange's own best prices (0.03% of deltas differ in a 20-minute sample). `pm_mm` fills quotes
-from recorded trades only, with a queue-ahead count per order, so its fills are conservative;
-inventory is valued at the last mid.
-
-## Research
-
-Each milestone has a report under `docs/results/`:
-
-- [Signals](docs/results/ms4-signals.md): streaming features, IC and decay; best combined
-  10 ms IC 0.41 (large-tick) and 0.21 (small-tick) on the validation day.
-- [Fills](docs/results/ms5-fills.md): competing-risks fill model calibrated on held-out
-  orders, queue value, markouts.
-- [Backtest](docs/results/ms6-backtest.md): strategies with fee and fill-rule sensitivity;
-  no strategy is above zero with confidence after costs.
-- [Regime](docs/results/ms7-regime.md): forecast of half-penny tick and fee-cap effects,
-  checked against the Tick Size Pilot.
-- [Impact](docs/results/ms8-impact.md): square-root exponent 0.45 from sign-run
-  metaorders; propagator kernel with a no-arbitrage check.
-- [Transformer](docs/results/ms9-transformer.md): event transformer in the trading loop.
-- [Validity](docs/results/ms10-validity.md): metamorphic relations for replay, a
-  queue-reactive simulator and the transformer.
-
-A pre-registration draft is in `docs/prereg/`; test days stay locked until a frozen run.
+`pm_stats` checks its rebuilt book against the exchange's own best prices (0.03% of deltas
+differ in a 20-minute sample). `pm_mm` fills quotes from recorded trades only, with a
+queue-ahead count per order, so its fills are conservative.
 
 ## License
 
