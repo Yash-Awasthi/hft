@@ -2,7 +2,10 @@
 // and lists every window in which an event's Yes asks summed below 1 or its bids above 1,
 // or a market's Yes and No did.
 //
-//   pm_arb <run-dir | dir of run dirs> ... > windows.tsv
+//   pm_arb [--min-ms M] <run-dir | dir of run dirs> ... > windows.tsv
+//
+// Windows shorter than M milliseconds (default 1) are dropped: they come from the two halves
+// of one price change arriving in separate messages, not from a price anyone could trade.
 //
 // stdout: one row per window. stderr: per-group totals over all runs. Edges are gross, in
 // units of 0.0001 per set of shares; fees and the cost of hitting several books in turn
@@ -10,6 +13,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <map>
 #include <string>
@@ -46,11 +50,16 @@ void runs_under(const fs::path& p, std::vector<fs::path>& out) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: pm_arb <run-dir | dir of run dirs> ...\n");
+        std::fprintf(stderr, "usage: pm_arb [--min-ms M] <run-dir | dir of run dirs> ...\n");
         return 2;
     }
     std::vector<fs::path> runs;
-    for (int i = 1; i < argc; ++i) runs_under(argv[i], runs);
+    double min_ms = 1;
+    std::uint64_t dropped = 0;
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--min-ms" && i + 1 < argc) min_ms = std::atof(argv[++i]);
+        else runs_under(argv[i], runs);
+    }
     std::map<std::string, Totals> totals;
     std::uint64_t messages = 0;
     std::printf("run\tgroup\tside\topen_ns\tduration_ms\topen_edge\tmax_edge\tsize_at_max\n");
@@ -72,6 +81,10 @@ int main(int argc, char** argv) {
             for (const ArbWindow& w : e.arb_closed()) {
                 const std::string& g = names[w.group].name;
                 const double ms = static_cast<double>(w.close_ns - w.open_ns) * 1e-6;
+                if (ms < min_ms) {
+                    ++dropped;
+                    continue;
+                }
                 std::printf("%s\t%s\t%s\t%lld\t%.3f\t%d\t%d\t%.2f\n", run.filename().c_str(), g.c_str(),
                             w.buy ? "asks<1" : "bids>1", static_cast<long long>(w.open_ns), ms, w.open_edge,
                             w.max_edge, w.size_at_max);
@@ -86,7 +99,8 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "%s: %s\n", run.c_str(), ex.what());
         }
     }
-    std::fprintf(stderr, "runs %zu messages %llu\n", runs.size(), static_cast<unsigned long long>(messages));
+    std::fprintf(stderr, "runs %zu messages %llu windows_under_%gms %llu\n", runs.size(),
+                 static_cast<unsigned long long>(messages), min_ms, static_cast<unsigned long long>(dropped));
     std::fprintf(stderr, "group\twindows\tasks<1\topen_s\tmedian_ms\tmax_edge\tmean_size\n");
     for (auto& [g, t] : totals) {
         std::sort(t.durations_ms.begin(), t.durations_ms.end());
