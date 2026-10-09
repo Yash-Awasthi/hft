@@ -195,6 +195,10 @@ pm_live --replay data/live                         # same decisions, same hash
 scripts/pm_live_supervise.sh data/pm-live --seconds 21600   # restart every 6 h, one directory per run
 ```
 
+`pm_arb <dir>` replays one run, or every run under a directory, through the books and the
+scanner alone and lists each arbitrage window (group, side, duration, edge, size on the
+thinnest leg), with per-group totals on stderr.
+
 Recordings rotate hourly (zstd) and stop at `--record-cap-gb` (default 20) while trading
 goes on. A stop signal exits with 128 plus the signal, which the supervisor treats as a stop.
 

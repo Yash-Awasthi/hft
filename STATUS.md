@@ -14,10 +14,13 @@ README "Performance"; the research-phase log is in
 
 ## Open
 
-1. After 2 to 3 days of `pm_live` recordings: report arbitrage windows (count, duration,
-   edge, size) and paper fills per event; an offline `pm_arb` over the recordings.
+1. After 2 to 3 days of `pm_live` recordings: `pm_arb ~/data/pm-live` and a short report.
+   First 2 h (675k messages): Yes/No pair windows last under 0.1 ms and open both ways at
+   once, which points at the two halves of one change arriving in separate messages, not
+   at a tradeable price; event-level windows last seconds to minutes with gross edges up
+   to 0.05 but a thinnest leg of about 8 to 70 shares. A filter for sub-millisecond windows
+   and a check for stale legs are the next things to add.
 2. After about two weeks of recorder data: `pm_stats` and `pm_mm` over the full recording.
-3. `pm_live` has no test for its session file and hourly rotation (both checked by hand).
 
 ## Needs the owner
 
