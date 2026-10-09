@@ -20,11 +20,12 @@ struct Json {
     double n = 0;
     std::string s;
     std::vector<Json> a;
-    std::vector<std::pair<std::string, Json>> o;
+    std::vector<std::string> keys;  // object members: keys[i] names o[i]
+    std::vector<Json> o;
 
     const Json* find(std::string_view key) const {
-        for (const auto& kv : o)
-            if (kv.first == key) return &kv.second;
+        for (std::size_t i = 0; i < keys.size(); ++i)
+            if (keys[i] == key) return &o[i];
         return nullptr;
     }
     // Empty / zero when the key is missing or has another type.
@@ -89,7 +90,8 @@ class JsonReader {
                     if (peek() != '"') fail("object key expected");
                     std::string k = string();
                     expect(':');
-                    v.o.emplace_back(std::move(k), value(depth + 1));
+                    v.keys.push_back(std::move(k));
+                    v.o.push_back(value(depth + 1));
                     if (peek() == ',') {
                         ++i_;
                         continue;
