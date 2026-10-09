@@ -29,6 +29,7 @@ class MultiFeatures {
         : index_(std::move(index_slots)),
           ema_(index_.size()),
           held_(index_.size(), std::numeric_limits<double>::quiet_NaN()) {
+        p.incremental_depth = true;  // every book change reaches the features as an event
         for (std::size_t i = 0; i < slots; ++i) sym_.push_back(std::make_unique<Sym>(p));
         for (auto& e : ema_) e.fill({std::numeric_limits<double>::quiet_NaN(), 0});
     }
