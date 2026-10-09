@@ -80,7 +80,7 @@ for the same cycles. Old and new targets with the reason for each are in the rev
 | Book update, 50 symbols interleaved, p50 / p99 | reported, no target | 81.0 / 366 ns | 79.6 / 367 ns | | [ms2](docs/results/ms2-book-study.md) |
 | Read + decode, 50 symbols | ≥ 30M msg/s | 17.8M | 31.6M (two decompression threads) | 74 per message, decode thread alone (32.3M) | [ms2](docs/results/ms2-book-study.md) |
 | Full-day replay, 50 stocks, one replay thread | ≤ 60 s | 25.9 s | 23.9 s | | [ms2](docs/results/ms2-book-study.md) |
-| Fork, 10k orders | ≤ 100 µs, ≥ 10 GB/s | 53.4 µs, 16.0 GiB/s | not re-measured | | [ms2](docs/results/ms2-book-study.md) |
+| Fork, 10k orders | ≤ 100 µs, ≥ 10 GB/s | 53.4 µs, 16.0 GiB/s | 46.9 µs, 17.2 GiB/s (one book; 50 books 4.95 ms by copy, 1.40 ms by process `fork()`) | | [ms2](docs/results/ms2-book-study.md) |
 | Transformer forecast step, small model, AVX2 | < 2 µs | 2,786 ns | 1,975 ns | | [ms9](docs/results/ms9-transformer.md) |
 | Transformer full step, small model, AVX2 | reported, no target | 2,935 ns | 2,140 ns | | [ms9](docs/results/ms9-transformer.md) |
 | Transformer full step, base model, AVX2 | reported, no target | 3,435 ns | 2,545 ns | | [ms9](docs/results/ms9-transformer.md) |
