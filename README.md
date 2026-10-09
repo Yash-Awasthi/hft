@@ -184,7 +184,11 @@ queue-ahead count per order, so its fills are conservative.
 pm_live --record data/live --seconds 3600          # dashboard on http://127.0.0.1:8088/
 pm_live --record data/live --spin --cpu 4          # busy-poll a pinned core for latency
 pm_live --replay data/live                         # same decisions, same hash
+scripts/pm_live_supervise.sh data/pm-live --seconds 21600   # restart every 6 h, one directory per run
 ```
+
+Recordings rotate hourly (zstd) and stop at `--record-cap-gb` (default 20) while trading
+goes on. A stop signal exits with 128 plus the signal, which the supervisor treats as a stop.
 
 It picks the most traded events in which exactly one market resolves Yes and every open
 market trades, and subscribes to every token in them. Each connection has its own thread,

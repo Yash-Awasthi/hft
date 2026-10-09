@@ -45,6 +45,10 @@ Working log for [docs/ROADMAP.md](docs/ROADMAP.md). The log of the research phas
 
 ## In progress
 
+- `pm_live` running since 2026-10-09 13:58 UTC under `scripts/pm_live_supervise.sh
+  ~/data/pm-live --record-cap-gb 20 --port 8088 --seconds 21600` (started by hand, not by the
+  logon task, so a reboot stops it). Dashboard at http://127.0.0.1:8088/. To stop it, kill
+  the supervisor first, then `pm_live`.
 - Recorder running since 2026-10-09 under the logon task, 32 markets (64 tokens), hourly zstd
   files in `$HFT_DATA/pm`, 50 GB cap.
 
