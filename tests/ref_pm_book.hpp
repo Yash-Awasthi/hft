@@ -1,32 +1,14 @@
 #pragma once
 
-// Level-2 book of one prediction-market outcome token, rebuilt from the exchange's snapshot
-// ("book") and delta ("price_change") messages. Prices are integers in units of 0.0001
-// (the contract pays 1.0000), sizes are shares.
+// Reference for pm::TokenBook: the same book on two std::maps.
 
 #include <cstdint>
-#include <cstdlib>
 #include <functional>
 #include <map>
-#include <string_view>
 
-namespace hft::pm {
+namespace hft::pm::test {
 
-// "0.366" -> 3660. Returns -1 on a malformed price.
-inline std::int32_t parse_price(std::string_view s) {
-    std::int32_t whole = 0, frac = 0, digits = 0;
-    std::size_t i = 0;
-    for (; i < s.size() && s[i] >= '0' && s[i] <= '9'; ++i) whole = whole * 10 + (s[i] - '0');
-    if (i < s.size() && s[i] == '.') {
-        for (++i; i < s.size() && s[i] >= '0' && s[i] <= '9'; ++i)
-            if (digits < 4) frac = frac * 10 + (s[i] - '0'), ++digits;
-    }
-    if (i != s.size() || s.empty() || s == "." || whole > 1 || (whole == 1 && frac > 0)) return -1;
-    while (digits++ < 4) frac *= 10;
-    return whole * 10000 + frac;
-}
-
-class TokenBook {
+class RefTokenBook {
    public:
     void clear() { bids_.clear(), asks_.clear(); }
 
@@ -78,4 +60,4 @@ class TokenBook {
     std::map<std::int32_t, double> asks_;
 };
 
-}  // namespace hft::pm
+}  // namespace hft::pm::test

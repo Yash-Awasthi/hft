@@ -10,13 +10,15 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <memory>
 #include <unordered_map>
 #include <vector>
 
 #include "pm/book.hpp"
 #include "pm/reader.hpp"
 
-using hft::net::Json;
+using hft::pm::Event;
+using hft::pm::Kind;
 
 namespace {
 
@@ -35,38 +37,44 @@ struct Meta {
 
 class Stats {
    public:
-    std::unordered_map<std::string, Token> tokens;
+    hft::pm::TokenIndex ids;
+    std::vector<std::unique_ptr<Token>> tokens;
     std::uint64_t other = 0;
 
-    void event(const Json& e, std::int64_t ns) {
-        const std::string type = e.str("event_type");
-        if (type == "book") {
-            Token& t = tokens[e.str("asset_id")];
-            account(t, ns);
-            t.book.clear();
-            for (const char* side : {"bids", "asks"})
-                if (const Json* lv = e.find(side))
-                    for (const Json& l : lv->a)
-                        t.book.set(side[0] == 'b', hft::pm::parse_price(l.str("price")),
-                                   std::strtod(l.str("size").c_str(), nullptr));
-            t.seeded = true;
-            ++t.snapshots;
-            if (t.book.crossed()) ++t.crossed;
-        } else if (type == "price_change") {
-            price_change(e, ns);
-        } else if (type == "last_trade_price") {
-            Token& t = tokens[e.str("asset_id")];
-            const double sz = std::strtod(e.str("size").c_str(), nullptr);
-            ++t.trades;
-            t.shares += sz;
-            t.notional += sz * std::strtod(e.str("price").c_str(), nullptr);
-        } else if (type != "best_bid_ask") {
-            // best_bid_ask arrives apart from the deltas, so its timing against the book is not defined.
-            ++other;
+    void event(const Event& e, std::int64_t ns) {
+        switch (e.kind) {
+            case Kind::Book: {
+                Token& t = token(e.asset);
+                account(t, ns);
+                t.book.clear();
+                for (const auto& l : e.bids) t.book.set(true, l.px, l.size);
+                for (const auto& l : e.asks) t.book.set(false, l.px, l.size);
+                t.seeded = true;
+                ++t.snapshots;
+                if (t.book.crossed()) ++t.crossed;
+                break;
+            }
+            case Kind::PriceChange: price_change(e, ns); break;
+            case Kind::Trade: {
+                Token& t = token(e.asset);
+                ++t.trades;
+                t.shares += e.size;
+                t.notional += e.size * hft::pm::parse_size(e.price);
+                break;
+            }
+            case Kind::Other:
+                // best_bid_ask arrives apart from the deltas, so its timing against the book is not defined.
+                if (e.type != "best_bid_ask") ++other;
         }
     }
 
    private:
+    Token& token(std::string_view id) {
+        const std::uint32_t i = ids.get(id);
+        if (i == tokens.size()) tokens.push_back(std::make_unique<Token>());
+        return *tokens[i];
+    }
+
     // Credits the time since the token's last change to the state it was in.
     static void account(Token& t, std::int64_t ns) {
         if (t.last_ns && ns > t.last_ns && t.book.two_sided() && !t.book.crossed()) {
@@ -79,41 +87,39 @@ class Stats {
         t.last_ns = ns;
     }
 
-    static void check(Token& t, const Json& e) {
-        const std::string bb = e.str("best_bid"), ba = e.str("best_ask");
-        if (bb.empty() || ba.empty() || !t.book.two_sided()) return;
-        if (hft::pm::parse_price(bb) != t.book.best_bid() || hft::pm::parse_price(ba) != t.book.best_ask())
+    static void check(Token& t, const hft::pm::Change& c) {
+        if (c.best_bid.empty() || c.best_ask.empty() || !t.book.two_sided()) return;
+        if (hft::pm::parse_price(c.best_bid) != t.book.best_bid() || hft::pm::parse_price(c.best_ask) != t.book.best_ask())
             ++t.mismatches;
     }
 
-    void price_change(const Json& e, std::int64_t ns) {
-        const Json* pc = e.find("price_changes");
-        if (!pc) {
+    void price_change(const Event& e, std::int64_t ns) {
+        if (!e.has_changes) {
             ++other;
             return;
         }
-        for (const Json& c : pc->a) {
-            Token& t = tokens[c.str("asset_id")];
+        for (const auto& c : e.changes) {
+            Token& t = token(c.asset);
             if (!t.seeded) continue;
             account(t, ns);
-            t.book.set(c.str("side") == "BUY", hft::pm::parse_price(c.str("price")),
-                       std::strtod(c.str("size").c_str(), nullptr));
+            t.book.set(c.buy, c.px, c.size);
             ++t.deltas;
         }
         // The exchange's best bid and offer describe the book after the whole message, so
         // each token is checked once, against its last entry.
-        std::vector<const std::string*> done;
-        for (std::size_t i = pc->a.size(); i-- > 0;) {
-            const Json* id = pc->a[i].find("asset_id");
-            if (!id || std::any_of(done.begin(), done.end(), [&](const std::string* s) { return *s == id->s; }))
-                continue;
-            done.push_back(&id->s);
-            Token& t = tokens[id->s];
+        done_.clear();
+        for (std::size_t i = e.changes.size(); i-- > 0;) {
+            const std::uint32_t id = ids.get(e.changes[i].asset);
+            if (std::find(done_.begin(), done_.end(), id) != done_.end()) continue;
+            done_.push_back(id);
+            Token& t = *tokens[id];
             if (!t.seeded) continue;
             if (t.book.crossed()) ++t.crossed;
-            check(t, pc->a[i]);
+            check(t, e.changes[i]);
         }
     }
+
+    std::vector<std::uint32_t> done_;
 };
 
 }  // namespace
@@ -136,13 +142,15 @@ int main(int argc, char** argv) {
     }
 
     Stats st;
-    const auto rs = hft::pm::read_records(root, [&](std::int64_t ns, const Json& e) { st.event(e, ns); });
+    const auto rs = hft::pm::read_records(root, [&](std::int64_t ns, const Event& e) { st.event(e, ns); });
 
     std::printf("token\ttag\tslug\toutcome\tsnapshots\tdeltas\ttrades\tshares\tnotional\tspread_cents\tdepth5c\t"
                 "crossed\tbba_mismatch\tobserved_h\n");
     std::vector<std::pair<std::string, const Token*>> rows;
-    for (const auto& [k, t] : st.tokens) rows.emplace_back(k, &t);
-    std::sort(rows.begin(), rows.end(), [](auto& a, auto& b) { return a.second->notional > b.second->notional; });
+    for (std::uint32_t i = 0; i < st.tokens.size(); ++i) rows.emplace_back(st.ids.key(i), st.tokens[i].get());
+    std::sort(rows.begin(), rows.end(), [](auto& a, auto& b) {
+        return a.second->notional != b.second->notional ? a.second->notional > b.second->notional : a.first < b.first;
+    });
     for (const auto& [k, tp] : rows) {
         const Token& t = *tp;
         const Meta m = meta.count(k) ? meta[k] : Meta{};

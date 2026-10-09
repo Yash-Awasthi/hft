@@ -17,8 +17,8 @@
 #include "pm/maker.hpp"
 #include "pm/reader.hpp"
 
-using hft::net::Json;
-using hft::pm::parse_price;
+using hft::pm::Event;
+using hft::pm::Kind;
 
 int main(int argc, char** argv) {
     if (argc < 2) {
@@ -51,50 +51,57 @@ int main(int argc, char** argv) {
         }
     }
 
-    std::unordered_map<std::string, std::unique_ptr<hft::pm::TokenMaker>> makers;
-    auto maker = [&](const std::string& id) -> hft::pm::TokenMaker& {
-        auto& m = makers[id];
-        if (!m) m = std::make_unique<hft::pm::TokenMaker>(p);
-        return *m;
+    hft::pm::TokenIndex ids;
+    std::vector<std::unique_ptr<hft::pm::TokenMaker>> makers;
+    std::vector<bool> seeded;
+    auto index = [&](std::string_view id) {
+        const std::uint32_t i = ids.get(id);
+        if (i == makers.size()) makers.push_back(std::make_unique<hft::pm::TokenMaker>(p)), seeded.push_back(false);
+        return i;
     };
-    std::unordered_map<std::string, bool> seeded;
+    std::vector<std::uint32_t> touched;
 
-    hft::pm::read_records(root, [&](std::int64_t ns, const Json& e) {
-        const std::string type = e.str("event_type");
-        if (type == "book") {
-            hft::pm::TokenMaker& m = maker(e.str("asset_id"));
-            m.book.clear();
-            for (const char* side : {"bids", "asks"})
-                if (const Json* lv = e.find(side))
-                    for (const Json& l : lv->a)
-                        m.book.set(side[0] == 'b', parse_price(l.str("price")), std::strtod(l.str("size").c_str(), nullptr));
-            if (const std::int32_t t = parse_price(e.str("tick_size")); t > 0) m.tick = t;
-            seeded[e.str("asset_id")] = true;
-            m.on_snapshot(ns);
-        } else if (type == "price_change") {
-            const Json* pc = e.find("price_changes");
-            if (!pc) return;
-            std::vector<std::string> touched;
-            for (const Json& c : pc->a) {
-                const std::string id = c.str("asset_id");
-                if (!seeded[id]) continue;
-                maker(id).book.set(c.str("side") == "BUY", parse_price(c.str("price")), std::strtod(c.str("size").c_str(), nullptr));
-                if (std::find(touched.begin(), touched.end(), id) == touched.end()) touched.push_back(id);
+    hft::pm::read_records(root, [&](std::int64_t ns, const Event& e) {
+        switch (e.kind) {
+            case Kind::Book: {
+                const std::uint32_t i = index(e.asset);
+                hft::pm::TokenMaker& m = *makers[i];
+                m.book.clear();
+                for (const auto& l : e.bids) m.book.set(true, l.px, l.size);
+                for (const auto& l : e.asks) m.book.set(false, l.px, l.size);
+                if (e.tick > 0) m.tick = e.tick;
+                seeded[i] = true;
+                m.on_snapshot(ns);
+                break;
             }
-            for (const std::string& id : touched) maker(id).on_level(ns);
-        } else if (type == "last_trade_price") {
-            const std::string id = e.str("asset_id");
-            if (!seeded[id]) return;
-            maker(id).on_trade(ns, e.str("side") == "BUY", parse_price(e.str("price")),
-                               std::strtod(e.str("size").c_str(), nullptr));
+            case Kind::PriceChange: {
+                touched.clear();
+                for (const auto& c : e.changes) {
+                    const std::uint32_t i = index(c.asset);
+                    if (!seeded[i]) continue;
+                    makers[i]->book.set(c.buy, c.px, c.size);
+                    if (std::find(touched.begin(), touched.end(), i) == touched.end()) touched.push_back(i);
+                }
+                for (const std::uint32_t i : touched) makers[i]->on_level(ns);
+                break;
+            }
+            case Kind::Trade: {
+                const std::uint32_t i = index(e.asset);
+                if (seeded[i]) makers[i]->on_trade(ns, e.buy, e.px, e.size);
+                break;
+            }
+            case Kind::Other: break;
         }
     });
 
     std::printf("token\tslug\toutcome\tquotes\tbuys\tsells\tshares\tpnl_usd\tend_inventory\tmax_inventory\n");
     double total = 0;
     std::vector<std::pair<std::string, hft::pm::TokenMaker*>> rows;
-    for (auto& [k, m] : makers) rows.emplace_back(k, m.get());
-    std::sort(rows.begin(), rows.end(), [](auto& a, auto& b) { return a.second->shares_traded() > b.second->shares_traded(); });
+    for (std::uint32_t i = 0; i < makers.size(); ++i) rows.emplace_back(ids.key(i), makers[i].get());
+    std::sort(rows.begin(), rows.end(), [](auto& a, auto& b) {
+        const double x = a.second->shares_traded(), y = b.second->shares_traded();
+        return x != y ? x > y : a.first < b.first;
+    });
     for (const auto& [k, m] : rows) {
         const auto it = meta.find(k);
         std::printf("%s\t%s\t%s\t%llu\t%llu\t%llu\t%.0f\t%.2f\t%.0f\t%.0f\n", k.c_str(), it == meta.end() ? "" : it->second.first.c_str(),
