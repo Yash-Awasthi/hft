@@ -14,7 +14,10 @@ Working log for [docs/ROADMAP.md](docs/ROADMAP.md). The log of the research phas
   2025-12-10 (197.8M events, one thread, LZ4 store, turbo on, three alternating runs):
   14.20 s release, 13.73 s native (-3.3%). `-ffp-contract=off` keeps floating-point results
   equal to the generic build. Pinning inside WSL2 selects a virtual CPU; the host decides
-  whether it runs on a P-core.
+  whether it runs on a P-core. Profile-guided on top of native and LTO (trained on the
+  ITCH store and a prediction-market recording) changes nothing beyond noise: per-symbol
+  replay 13.71 s native against 13.84 s PGO, `pm_stats` 1.95 s against 1.94 s (two runs
+  each). The earlier 10% PGO gain was over the generic build.
 
 - P3: prediction-market path rebuilt for speed. On a fixed 2.0M-message recording (1.3 GB of
   JSON, 18 hour files), native build, best of two runs:
