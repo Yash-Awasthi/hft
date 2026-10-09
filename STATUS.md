@@ -14,17 +14,10 @@ README "Performance"; the research-phase log is in
 
 ## Open
 
-1. The ITCH trading stack has no program: `src/backtest`, `src/strategy`, the matching
-   engine and the replay exchange are reached only by tests since the Python module was
-   archived. Either add an `itch_backtest` app (strategy, day, PnL, fills, latency) or move
-   the stack to `archive/`.
-2. Research-only headers still in the build, used by tests alone: `strategy/labeler.hpp`,
-   `strategy/grid.hpp`, `strategy/qr_events.hpp`, `sources/queue_reactive.hpp`. Decide
-   with item 1.
-3. After 2 to 3 days of `pm_live` recordings: report arbitrage windows (count, duration,
+1. After 2 to 3 days of `pm_live` recordings: report arbitrage windows (count, duration,
    edge, size) and paper fills per event; an offline `pm_arb` over the recordings.
-4. After about two weeks of recorder data: `pm_stats` and `pm_mm` over the full recording.
-5. `pm_live` has no test for its session file and hourly rotation (both checked by hand).
+2. After about two weeks of recorder data: `pm_stats` and `pm_mm` over the full recording.
+3. `pm_live` has no test for its session file and hourly rotation (both checked by hand).
 
 ## Needs the owner
 
