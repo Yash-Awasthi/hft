@@ -1,8 +1,8 @@
 #pragma once
 
-// Order storage layouts for TickBook, all index-addressed. HotCold keeps the fields touched
-// on every update (price, quantity, queue links) in 16 bytes and the reference, arrival
-// sequence and owner apart; Aos keeps one 40-byte record; Soa keeps one array per field.
+// Order storage for TickBook, index-addressed. The fields touched on every update (price,
+// quantity, queue links) sit in 16-byte hot records; reference, arrival sequence and owner
+// sit apart in cold records.
 
 #include <cstddef>
 #include <cstdint>
@@ -80,119 +80,6 @@ class HotCold {
     };
     Pool<Hot> hot_;
     Pool<Cold> cold_;
-};
-
-class Aos {
-   public:
-    explicit Aos(std::size_t n) : o_(n) {}
-    void reserve(std::size_t n) { o_.reserve(n); }
-    std::uint32_t& px(std::uint32_t i) { return o_[i].px; }
-    std::uint32_t& qty(std::uint32_t i) { return o_[i].qty; }
-    std::uint32_t& next(std::uint32_t i) { return o_[i].next; }
-    std::uint32_t& prev(std::uint32_t i) { return o_[i].prev; }
-    std::uint32_t px(std::uint32_t i) const { return o_[i].px; }
-    std::uint32_t qty(std::uint32_t i) const { return o_[i].qty; }
-    std::uint32_t next(std::uint32_t i) const { return o_[i].next; }
-    std::uint32_t prev(std::uint32_t i) const { return o_[i].prev; }
-    std::uint64_t ref(std::uint32_t i) const { return o_[i].ref; }
-    std::uint64_t seq(std::uint32_t i) const { return o_[i].seq; }
-    std::uint32_t owner(std::uint32_t i) const { return o_[i].owner; }
-    void prefetch(std::uint32_t i) const { __builtin_prefetch(&o_[i]); }
-    void set(std::uint32_t i, std::uint32_t px, std::uint32_t qty, std::uint32_t next,
-             std::uint32_t prev, std::uint64_t ref, std::uint64_t seq, std::uint32_t owner) {
-        o_[i] = {px, qty, next, prev, ref, seq, owner, 0};
-    }
-    void copy_from(const Aos& o, std::size_t used) { o_.copy_from(o.o_, used); }
-    void save(std::vector<std::uint8_t>& out, std::size_t used) const {
-        detail::put(out, o_.data(), used * sizeof(Order));
-    }
-    bool load(const std::uint8_t*& p, const std::uint8_t* end, std::size_t used) {
-        reserve(used);
-        return detail::get(p, end, o_.data(), used * sizeof(Order));
-    }
-
-   private:
-    struct Order {
-        std::uint32_t px, qty, next, prev;
-        std::uint64_t ref, seq;
-        std::uint32_t owner, pad;
-    };
-    static_assert(sizeof(Order) == 40);
-    Pool<Order> o_;
-};
-
-class Soa {
-   public:
-    explicit Soa(std::size_t n)
-        : px_(n), qty_(n), next_(n), prev_(n), owner_(n), ref_(n), seq_(n) {}
-    void reserve(std::size_t n) {
-        px_.reserve(n);
-        qty_.reserve(n);
-        next_.reserve(n);
-        prev_.reserve(n);
-        owner_.reserve(n);
-        ref_.reserve(n);
-        seq_.reserve(n);
-    }
-    std::uint32_t& px(std::uint32_t i) { return px_[i]; }
-    std::uint32_t& qty(std::uint32_t i) { return qty_[i]; }
-    std::uint32_t& next(std::uint32_t i) { return next_[i]; }
-    std::uint32_t& prev(std::uint32_t i) { return prev_[i]; }
-    std::uint32_t px(std::uint32_t i) const { return px_[i]; }
-    std::uint32_t qty(std::uint32_t i) const { return qty_[i]; }
-    std::uint32_t next(std::uint32_t i) const { return next_[i]; }
-    std::uint32_t prev(std::uint32_t i) const { return prev_[i]; }
-    std::uint64_t ref(std::uint32_t i) const { return ref_[i]; }
-    std::uint64_t seq(std::uint32_t i) const { return seq_[i]; }
-    std::uint32_t owner(std::uint32_t i) const { return owner_[i]; }
-    void prefetch(std::uint32_t i) const {
-        __builtin_prefetch(&px_[i]);
-        __builtin_prefetch(&qty_[i]);
-        __builtin_prefetch(&next_[i]);
-        __builtin_prefetch(&prev_[i]);
-    }
-    void set(std::uint32_t i, std::uint32_t px, std::uint32_t qty, std::uint32_t next,
-             std::uint32_t prev, std::uint64_t ref, std::uint64_t seq, std::uint32_t owner) {
-        owner_[i] = owner;
-        px_[i] = px;
-        qty_[i] = qty;
-        next_[i] = next;
-        prev_[i] = prev;
-        ref_[i] = ref;
-        seq_[i] = seq;
-    }
-    void copy_from(const Soa& o, std::size_t used) {
-        px_.copy_from(o.px_, used);
-        qty_.copy_from(o.qty_, used);
-        next_.copy_from(o.next_, used);
-        prev_.copy_from(o.prev_, used);
-        owner_.copy_from(o.owner_, used);
-        ref_.copy_from(o.ref_, used);
-        seq_.copy_from(o.seq_, used);
-    }
-    void save(std::vector<std::uint8_t>& out, std::size_t used) const {
-        detail::put(out, px_.data(), used * 4);
-        detail::put(out, qty_.data(), used * 4);
-        detail::put(out, next_.data(), used * 4);
-        detail::put(out, prev_.data(), used * 4);
-        detail::put(out, owner_.data(), used * 4);
-        detail::put(out, ref_.data(), used * 8);
-        detail::put(out, seq_.data(), used * 8);
-    }
-    bool load(const std::uint8_t*& p, const std::uint8_t* end, std::size_t used) {
-        reserve(used);
-        return detail::get(p, end, px_.data(), used * 4) &&
-               detail::get(p, end, qty_.data(), used * 4) &&
-               detail::get(p, end, next_.data(), used * 4) &&
-               detail::get(p, end, prev_.data(), used * 4) &&
-               detail::get(p, end, owner_.data(), used * 4) &&
-               detail::get(p, end, ref_.data(), used * 8) &&
-               detail::get(p, end, seq_.data(), used * 8);
-    }
-
-   private:
-    Pool<std::uint32_t> px_, qty_, next_, prev_, owner_;
-    Pool<std::uint64_t> ref_, seq_;
 };
 
 }  // namespace hft::book

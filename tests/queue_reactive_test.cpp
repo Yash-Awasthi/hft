@@ -35,8 +35,8 @@ sources::QrParams params(int K = 3, int N = 20) {
 // Replays the stream, checking that every message applies, the book is never crossed or
 // locked and the reference price stays strictly inside the quotes.
 struct Replay {
-    book::TickBook<> b;
-    book::ItchApply<book::TickBook<>> apply{b};
+    book::TickBook b;
+    book::ItchApply<book::TickBook> apply{b};
     std::uint64_t msgs = 0, bad_quotes = 0;
     void run(const std::vector<std::uint8_t>& raw) {
         itch::Frame f{};

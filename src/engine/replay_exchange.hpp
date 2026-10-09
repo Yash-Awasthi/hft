@@ -32,7 +32,7 @@ struct Divergence {
     std::uint64_t hidden_fills = 0;   // virtual fills from executions of hidden orders
 };
 
-template <class Book = book::TickBook<>>
+template <class Book = book::TickBook>
 class ReplayExchange {
    public:
     ReplayExchange(Config cfg, FillRule rule, std::size_t expected_orders = 1024)

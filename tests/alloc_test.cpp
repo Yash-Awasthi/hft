@@ -105,8 +105,8 @@ std::vector<std::uint8_t> stream(std::size_t msgs, std::size_t live) {
 
 TEST(Alloc, SteadyStateReplayDoesNotAllocate) {
     const std::vector<std::uint8_t> msgs = stream(500'000, 4000);
-    book::TickBook<book::LinearMap> b(8192);
-    book::ItchApply<book::TickBook<book::LinearMap>> ap{b};
+    book::TickBook b(8192);
+    book::ItchApply<book::TickBook> ap{b};
 
     const std::uint64_t news = g_news, maps = PoolStats::maps;
     itch::Frame f{};

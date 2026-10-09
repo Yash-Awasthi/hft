@@ -102,8 +102,7 @@ TEST(Fixture, GeneratorReproducesCommittedBytes) {
 TEST(Fixture, AllBooksGiveTheGoldenBboStream) {
     const auto raw = fixture();
     const std::uint64_t want = bbo_hash<book::MapBook>(raw);
-    EXPECT_EQ(bbo_hash<book::TickBook<>>(raw), want);
-    EXPECT_EQ((bbo_hash<book::TickBook<book::RobinHoodMap, book::Soa>>(raw)), want);
+    EXPECT_EQ(bbo_hash<book::TickBook>(raw), want);
     EXPECT_EQ(want, 0xab517e7049413acaull) << std::hex << want;
 }
 

@@ -65,8 +65,8 @@ int main(int argc, char** argv) {
         "rv_1min\n");
     for (std::uint16_t loc : locs) {
         if (loc == 0) continue;
-        book::TickBook<> b(4096);
-        book::ItchApply<book::TickBook<>> ap{b};
+        book::TickBook b(4096);
+        book::ItchApply<book::TickBook> ap{b};
         Stats s;
         Meta meta{s};
         data::SymbolReader rd(dir, loc);

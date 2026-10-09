@@ -46,6 +46,13 @@ Working log for [docs/ROADMAP.md](docs/ROADMAP.md). The log of the research phas
   one 90 s session checked). First sessions: 88 tokens in 5 events, no arbitrage window
   and no paper fill in 90 s.
 
+- Book variants removed: `TickBook` is now one class (linear-probing order-ID map, hot/cold
+  order records, 2,048-tick window); the Robin Hood and direct-mapped ID maps, the AoS and
+  SoA layouts and the sorted-vector book are gone (382 lines). `std::map` stays as the
+  test reference. Full-day BBO output over 12,116 symbols is byte-identical, checkpoints
+  verify, and per-symbol replay is unchanged within noise (13.06 s). Their earlier
+  comparison stays in `docs/results/ms2-book-study.md`.
+
 ## In progress
 
 - `pm_live` running since 2026-10-09 13:58 UTC under `scripts/pm_live_supervise.sh

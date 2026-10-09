@@ -64,7 +64,7 @@ struct Working {
 // Everything the strategy may look at when it decides: no exchange-side state.
 struct View {
     std::uint64_t now;  // strategy clock
-    const book::TickBook<>& book;
+    const book::TickBook& book;
     const double* features;
     std::size_t n_features;
     double mid;  // ticks, NaN when one-sided
@@ -307,7 +307,7 @@ class Backtest {
         ++sum_.orders;
     }
 
-    void queue_positions(const book::TickBook<>& b) {
+    void queue_positions(const book::TickBook& b) {
         for (Working& w : working_) {
             if (w.ioc) continue;
             w.level = static_cast<double>(b.level_qty(w.side, w.price));

@@ -11,7 +11,7 @@
 
 namespace {
 
-using Book = hft::book::TickBook<>;
+using Book = hft::book::TickBook;
 
 // 10k resting orders: most within 50 ticks of a $100 mid, a tenth spread far out.
 void fill(Book& b, std::size_t n) {

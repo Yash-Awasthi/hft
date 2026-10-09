@@ -22,7 +22,7 @@ using namespace hft::strategy;
 namespace {
 
 struct Rig {
-    book::TickBook<> b;
+    book::TickBook b;
     MarketFeed<> feed{b};
     SymbolFeatures f;
     std::uint64_t seq = 0;
@@ -98,7 +98,7 @@ std::vector<std::vector<std::uint8_t>> symbol_messages(const std::vector<std::ui
 // Feature rows (raw bytes) after each of the first `upto` messages.
 std::vector<std::uint8_t> rows(const std::vector<std::vector<std::uint8_t>>& msgs,
                                std::size_t upto) {
-    book::TickBook<> b;
+    book::TickBook b;
     MarketFeed<> feed(b);
     SymbolFeatures f;
     std::vector<std::uint8_t> out;
@@ -119,7 +119,7 @@ std::vector<std::uint8_t> rows(const std::vector<std::vector<std::uint8_t>>& msg
 // depth walk.
 std::vector<std::uint8_t> all_rows(const std::vector<std::vector<std::uint8_t>>& msgs,
                                    bool incremental) {
-    book::TickBook<> b;
+    book::TickBook b;
     MarketFeed<> feed(b);
     FeatureParams p;
     p.incremental_depth = incremental;

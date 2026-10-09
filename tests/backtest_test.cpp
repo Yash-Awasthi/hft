@@ -86,7 +86,7 @@ TEST(Backtest, RandomTakingLosesAboutHalfTheSpreadPlusFees) {
 
 // The GLFT quotes widen against inventory: a long position lowers both quotes.
 TEST(Strategies, AvellanedaStoikovSkewsAgainstInventory) {
-    book::TickBook<> b;
+    book::TickBook b;
     b.add(1, Side::Buy, 100, 10'0000, 1);
     b.add(2, Side::Sell, 100, 10'0500, 2);
     std::vector<Working> w;
@@ -106,7 +106,7 @@ TEST(Strategies, AvellanedaStoikovSkewsAgainstInventory) {
 
 // A distance cap keeps quotes near the mid when the fitted intensity would put them far away.
 TEST(Strategies, AvellanedaStoikovDistanceCap) {
-    book::TickBook<> b;
+    book::TickBook b;
     b.add(1, Side::Buy, 100, 10'0000, 1);
     b.add(2, Side::Sell, 100, 10'0500, 2);
     std::vector<Working> w;
@@ -127,7 +127,7 @@ TEST(Strategies, AvellanedaStoikovDistanceCap) {
 
 // A bid fill after 10 s of quoting raises the fitted intensity; without `online` A, k stay.
 TEST(Strategies, AvellanedaStoikovRecalibratesOnItsFills) {
-    book::TickBook<> b;
+    book::TickBook b;
     b.add(1, Side::Buy, 100, 10'0000, 1);
     b.add(2, Side::Sell, 100, 10'0500, 2);
     std::vector<Working> w;
@@ -254,7 +254,7 @@ TEST(Strategies, DpPolicyLooksUpTheExportedLayout) {
     const std::string path = write_table(dir, 0, 0);
     DpPolicy p;
     p.load(path);
-    book::TickBook<> b;
+    book::TickBook b;
     b.add(1, Side::Buy, 100, 10'0000, 1);
     b.add(2, Side::Sell, 100, 10'0100, 2);
     std::vector<Working> w;
@@ -277,7 +277,7 @@ TEST(Strategies, ExtendedGuardsAndTakes) {
     Extended e;
     e.dp.load(write_table(dir, 0.0, 10.0));  // signal = 10 x imbalance, in ticks
     e.vol_limit = 1.0;
-    book::TickBook<> b;
+    book::TickBook b;
     b.add(1, Side::Buy, 100, 10'0000, 1);
     b.add(2, Side::Sell, 100, 10'0100, 2);
     std::vector<Working> w;

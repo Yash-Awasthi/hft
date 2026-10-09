@@ -3,8 +3,8 @@
 // Main L3 book. Price levels live in a dense window of kLevels ticks per side with a
 // two-level bitmap of non-empty levels, so the best level is two lzcnt or tzcnt. Levels on
 // the tick grid but outside the window go to a radix tree (level_radix.hpp); the rare
-// prices off the grid sit in a small sorted array. Orders are index-addressed in the layout
-// chosen by Store (order_store.hpp).
+// prices off the grid sit in a small sorted array. Orders are index-addressed, split into
+// hot and cold records (order_store.hpp); order ids resolve through an open-addressing map.
 
 #include <algorithm>
 #include <bit>
@@ -23,11 +23,9 @@
 
 namespace hft::book {
 
-// Levels == 0 gives a sorted-vector book: every level lives in the sorted overflow arrays.
-template <class IdMap = LinearMap, class Store = HotCold, std::uint32_t Levels = 2048>
 class TickBook {
    public:
-    static constexpr std::uint32_t kLevels = Levels;
+    static constexpr std::uint32_t kLevels = 2048;
 
     // tick: price grid in ITCH units (100 is $0.01, 50 is $0.005); 0 picks 100 or, for a first
     // price under $1, 1.
@@ -374,7 +372,7 @@ class TickBook {
 
     // Tick index of a price for the radix, or kNoOrder when off the grid or out of its range.
     std::uint32_t grid(std::uint32_t px) const {
-        if (kLevels == 0 || tick_ == 0) return kNoOrder;  // the sorted-vector book has no radix
+        if (tick_ == 0) return kNoOrder;
         const std::uint32_t g = tick_ == 1 ? px : tick_ == 100 ? px / 100 : px / tick_;
         return g * tick_ == px && g < LevelRadix<Level>::kRange ? g : kNoOrder;
     }
@@ -411,17 +409,13 @@ class TickBook {
                     consider(base_ + k * tick_, &win_[s][k]);
             }
             // Radix, on tick indices.
-            if (kLevels) {
-                std::uint32_t g = 0;
-                const std::uint64_t ceil = (std::uint64_t{px} + tick_ - 1) / tick_;
-                const bool found =
-                    s == 0 ? (ceil >= LevelRadix<Level>::kRange
-                                  ? deep_[s].extreme(true, g)
-                                  : deep_[s].next(true, static_cast<std::uint32_t>(ceil), g))
-                           : px / tick_ < LevelRadix<Level>::kRange &&
-                                 deep_[s].next(false, px / tick_, g);
-                if (found) consider(g * tick_, &deep_[s].at(g));
-            }
+            std::uint32_t g = 0;
+            const std::uint64_t ceil = (std::uint64_t{px} + tick_ - 1) / tick_;
+            const bool found = s == 0 ? (ceil >= LevelRadix<Level>::kRange
+                                             ? deep_[s].extreme(true, g)
+                                             : deep_[s].next(true, static_cast<std::uint32_t>(ceil), g))
+                                      : px / tick_ < LevelRadix<Level>::kRange && deep_[s].next(false, px / tick_, g);
+            if (found) consider(g * tick_, &deep_[s].at(g));
         }
         // Off-grid array, worst first: the last entry strictly worse than px.
         const OverLevel* b = &over_[s][0];
@@ -566,7 +560,7 @@ class TickBook {
         }
         const std::uint32_t g = grid(px);
         std::uint32_t k = g - base_g_;
-        if (kLevels && (g == kNoOrder || k >= kLevels)) {
+        if (g == kNoOrder || k >= kLevels) {
             const auto [bpx, bl] = best(s);
             if (!bl || worse(s, bpx, px)) {
                 recentre(s, px);
@@ -693,8 +687,8 @@ class TickBook {
         return hole;
     }
 
-    Store o_;
-    IdMap ids_;
+    HotCold o_;
+    LinearMap ids_;
     Pool<OverLevel> over_[2];
     LevelRadix<Level> deep_[2];
     std::uint32_t n_over_[2];
@@ -705,11 +699,8 @@ class TickBook {
     std::uint32_t tick_, base_, base_g_;
     std::uint64_t recentres_;
     std::uint64_t summary_[2];
-    std::uint64_t bits_[2][kWords ? kWords : 1];
-    Level win_[2][kLevels ? kLevels : 1];
+    std::uint64_t bits_[2][kWords];
+    Level win_[2][kLevels];
 };
-
-template <class IdMap = LinearMap, class Store = HotCold>
-using SortedVecBook = TickBook<IdMap, Store, 0>;
 
 }  // namespace hft::book

@@ -169,8 +169,8 @@ class QrRecorder {
     std::uint32_t tick_;
     std::uint64_t start_, end_, ts_ = 0;
     std::uint32_t pref_ = 0;
-    book::TickBook<> b_;
-    book::ItchApply<book::TickBook<>> apply_{b_};
+    book::TickBook b_;
+    book::ItchApply<book::TickBook> apply_{b_};
     std::vector<Ev> pending_;
     std::vector<std::uint64_t> snap_;
     bool pending_episode_[2] = {false, false}, was_empty_[2] = {false, false};

@@ -10,7 +10,7 @@
 
 namespace hft::strategy {
 
-template <class Book = book::TickBook<>>
+template <class Book = book::TickBook>
 class MarketFeed {
    public:
     explicit MarketFeed(Book& b) : book_(b) {}

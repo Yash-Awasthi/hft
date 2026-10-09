@@ -31,7 +31,7 @@
 namespace {
 
 using namespace hft;
-using Book = book::TickBook<book::LinearMap>;
+using Book = book::TickBook;
 
 struct CheckpointEntry {
     std::uint64_t offset;

@@ -1,9 +1,9 @@
 // Order book study: store read + decode throughput, per-event book update latency and the
-// end-to-end replay, over the busiest symbols of a store. Prints one CSV row per repetition;
-// research/book_study.py turns them into the comparison table.
+// end-to-end replay, over the busiest symbols of a store. Prints one CSV row per repetition.
 // Usage: book_study <store-dir> <mode> [top-n] [reps] [read-threads]
 //   mode: decode | decode-only | decompress | book | book:<variant> | replay
 //         | book-cg:<variant> (one untimed pass, for Cachegrind)
+//   variant: map | tick | tick-prefetch | tick-4k (tick book without huge pages)
 
 
 #if __has_include(<valgrind/cachegrind.h>)
@@ -291,21 +291,11 @@ void book_mode(const std::filesystem::path& dir, const std::vector<std::uint16_t
         }
         for (auto& c2 : cap) c2 = c2 + c2 / 4 + 64;
     }
-    using Tick = book::TickBook<book::LinearMap>;
-    using TickRh = book::TickBook<book::RobinHoodMap>;
-    using TickDm = book::TickBook<book::DirectMap<>>;
-    using TickAos = book::TickBook<book::LinearMap, book::Aos>;
-    using TickSoa = book::TickBook<book::LinearMap, book::Soa>;
-    using SortedVec = book::SortedVecBook<>;
+    using Tick = book::TickBook;
     if (only.starts_with("book-cg:")) {
         const std::string_view v = only.substr(8);
         if (v == "map") book_cachegrind<book::MapBook>(ev, cap);
         if (v == "tick") book_cachegrind<Tick>(ev, cap);
-        if (v == "tick-rh") book_cachegrind<TickRh>(ev, cap);
-        if (v == "tick-dm") book_cachegrind<TickDm>(ev, cap);
-        if (v == "tick-aos") book_cachegrind<TickAos>(ev, cap);
-        if (v == "tick-soa") book_cachegrind<TickSoa>(ev, cap);
-        if (v == "tick-sv") book_cachegrind<SortedVec>(ev, cap);
         if (v == "tick-4k") {
             PoolStats::huge_pages = false;
             book_cachegrind<Tick>(ev, cap);
@@ -322,11 +312,6 @@ void book_mode(const std::filesystem::path& dir, const std::vector<std::uint16_t
     if (want("tick")) book_variant<Tick>("tick", ev, cap, reps, tpn, ovh);
     if (want("tick-prefetch"))
         book_variant<Prefetched<Tick>>("tick-prefetch", ev, cap, reps, tpn, ovh);
-    if (want("tick-rh")) book_variant<TickRh>("tick-rh", ev, cap, reps, tpn, ovh);
-    if (want("tick-dm")) book_variant<TickDm>("tick-dm", ev, cap, reps, tpn, ovh);
-    if (want("tick-aos")) book_variant<TickAos>("tick-aos", ev, cap, reps, tpn, ovh);
-    if (want("tick-soa")) book_variant<TickSoa>("tick-soa", ev, cap, reps, tpn, ovh);
-    if (want("tick-sv")) book_variant<SortedVec>("tick-sv", ev, cap, reps, tpn, ovh);
     if (want("tick-4k")) {
         PoolStats::huge_pages = false;
         book_variant<Tick>("tick-4k", ev, cap, reps, tpn, ovh);
@@ -340,7 +325,7 @@ void book_mode(const std::filesystem::path& dir, const std::vector<std::uint16_t
 template <std::size_t Look>
 void replay_run(const std::filesystem::path& dir, const std::vector<std::uint16_t>& locs, int reps,
                 unsigned threads) {
-    using Tick = book::TickBook<book::LinearMap>;
+    using Tick = book::TickBook;
     std::string variant = threads > 1 ? "tick-t" + std::to_string(threads) : "tick";
     if (Look) variant += "-look" + std::to_string(Look);
     for (int r = 0; r <= reps; ++r) {
@@ -395,7 +380,7 @@ void replay_run(const std::filesystem::path& dir, const std::vector<std::uint16_
 // No merge, and one book's working set stays in cache. The BBO sum equals the merged replay's.
 void replay_sym(const std::filesystem::path& dir, const std::vector<std::uint16_t>& locs, int reps,
                 unsigned threads) {
-    using Tick = book::TickBook<book::LinearMap>;
+    using Tick = book::TickBook;
     std::vector<std::pair<std::uint64_t, std::uint16_t>> order;
     for (const std::uint16_t loc : locs) {
         std::uint64_t msgs = 0;

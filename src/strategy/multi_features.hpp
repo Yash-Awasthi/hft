@@ -59,7 +59,7 @@ class MultiFeatures {
 
     const MarketEvent& last_event() const { return last_; }
     const SymbolFeatures& symbol(std::size_t slot) const { return sym_[slot]->f; }
-    const book::TickBook<>& book(std::size_t slot) const { return sym_[slot]->book; }
+    const book::TickBook& book(std::size_t slot) const { return sym_[slot]->book; }
 
     // Own features of `slot`, then for each index and horizon the index momentum at time ts.
     void row(std::size_t slot, std::uint64_t ts, double* out) const {
@@ -79,7 +79,7 @@ class MultiFeatures {
    private:
     struct Sym {
         explicit Sym(FeatureParams p) : feed(book), f(p) {}
-        book::TickBook<> book;
+        book::TickBook book;
         MarketFeed<> feed;
         SymbolFeatures f;
     };

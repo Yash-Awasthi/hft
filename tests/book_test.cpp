@@ -17,9 +17,7 @@ class BookTest : public ::testing::Test {
     void TearDown() override { EXPECT_TRUE(b.check()); }
 };
 
-using Books = ::testing::Types<MapBook, TickBook<LinearMap>, TickBook<RobinHoodMap>,
-                               TickBook<DirectMap<>>, TickBook<LinearMap, Aos>,
-                               TickBook<LinearMap, Soa>, SortedVecBook<>>;
+using Books = ::testing::Types<MapBook, TickBook>;
 TYPED_TEST_SUITE(BookTest, Books);
 
 constexpr Side kB = Side::Buy;
@@ -162,9 +160,7 @@ TYPED_TEST(BookTest, SharesAndRestingTotal) {
 // A loaded snapshot replayed forward must serialise byte-identically to the original.
 template <class B>
 class TickSnapshot : public ::testing::Test {};
-using TickBooks =
-    ::testing::Types<TickBook<LinearMap>, TickBook<RobinHoodMap>, TickBook<DirectMap<16>>,
-                     TickBook<LinearMap, Aos>, TickBook<LinearMap, Soa>>;
+using TickBooks = ::testing::Types<TickBook>;
 TYPED_TEST_SUITE(TickSnapshot, TickBooks);
 
 TYPED_TEST(TickSnapshot, LoadThenReplayMatches) {
@@ -264,7 +260,7 @@ TYPED_TEST(TickQueue, FrontAndBehindWalkTimePriority) {
 
 // Half-penny grid: $0.005 ticks land in the window, and a level far away in the radix.
 TEST(TickBookTick, HalfPennyGrid) {
-    TickBook<> b(1024, 50);
+    TickBook b(1024, 50);
     ASSERT_TRUE(b.add(1, kB, 100, 10'0050, 1));
     ASSERT_TRUE(b.add(2, kS, 100, 10'0100, 2));
     ASSERT_TRUE(b.add(3, kB, 100, 1'0050, 3));
@@ -308,7 +304,7 @@ TYPED_TEST(TickQueue, NextLevelWalksAllLevelsInOrder) {
 // because checkpoints store the raw table image. Replace is erase_at then after_erase.
 template <class M>
 class IdMapProbe : public ::testing::Test {};
-using IdMaps = ::testing::Types<LinearMap, RobinHoodMap, DirectMap<64>>;
+using IdMaps = ::testing::Types<LinearMap>;
 TYPED_TEST_SUITE(IdMapProbe, IdMaps);
 
 TYPED_TEST(IdMapProbe, SameImageAsFindInsertErase) {

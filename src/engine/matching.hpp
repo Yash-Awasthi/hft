@@ -66,7 +66,7 @@ struct Event {
     std::uint64_t match = 0;
 };
 
-template <class Book = book::TickBook<>>
+template <class Book = book::TickBook>
 class MatchingEngine {
    public:
     // Engine references start high so they never collide with ITCH references in replay.

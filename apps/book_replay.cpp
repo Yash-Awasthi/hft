@@ -1,7 +1,7 @@
 // Replays symbols of a store through a book and reports per-symbol book statistics, a hash
 // of the BBO stream and invariant failures.
 // Usage: book_replay <store-dir> <book> [locate ...]   (no locate: every symbol)
-//   book: map | tick | tick-rh | tick-dm | tick-aos | tick-soa | tick-sv
+//   book: map | tick
 // Env: CHECK_EVERY=N runs the full invariant check every N book events (default 0: off).
 //      THREADS=N replays N symbols at a time (default: all hardware threads); rows print in locate order.
 
@@ -148,9 +148,7 @@ int main(int argc, char** argv) {
     std::printf(
         "locate symbol msgs book_msgs errors max_orders bbo_changes crossed locked "
         "max_cross_ms crossed_trading executed hidden cross check_fail bbo_hash\n");
-    static const std::string_view kKinds[] = {"map", "tick", "tick-rh", "tick-dm",
-                                              "tick-aos", "tick-soa", "tick-sv"};
-    if (std::find(std::begin(kKinds), std::end(kKinds), kind) == std::end(kKinds)) {
+    if (kind != "map" && kind != "tick") {
         std::fprintf(stderr, "unknown book %s\n", argv[2]);
         return 2;
     }
@@ -158,18 +156,8 @@ int main(int argc, char** argv) {
         Result r;
         if (kind == "map")
             r = replay<book::MapBook>(dir, loc, check_every);
-        else if (kind == "tick")
-            r = replay<book::TickBook<book::LinearMap>>(dir, loc, check_every);
-        else if (kind == "tick-rh")
-            r = replay<book::TickBook<book::RobinHoodMap>>(dir, loc, check_every);
-        else if (kind == "tick-dm")
-            r = replay<book::TickBook<book::DirectMap<>>>(dir, loc, check_every);
-        else if (kind == "tick-aos")
-            r = replay<book::TickBook<book::LinearMap, book::Aos>>(dir, loc, check_every);
-        else if (kind == "tick-soa")
-            r = replay<book::TickBook<book::LinearMap, book::Soa>>(dir, loc, check_every);
         else
-            r = replay<book::SortedVecBook<>>(dir, loc, check_every);
+            r = replay<book::TickBook>(dir, loc, check_every);
         if (r.max_cross_ns > kPersistentCrossNs) ++r.check_failures;
         return r;
     };

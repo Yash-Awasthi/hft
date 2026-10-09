@@ -141,8 +141,7 @@ struct Arbitrary<Op> {
 }  // namespace rc
 
 RC_GTEST_PROP(BookProp, AllBooksMatchBaseline, (const std::vector<Op>& ops)) {
-    run<TickBook<LinearMap>, TickBook<RobinHoodMap>, TickBook<DirectMap<16>>,
-        TickBook<LinearMap, Aos>, TickBook<LinearMap, Soa>, SortedVecBook<>>(ops);
+    run<TickBook>(ops);
 }
 
 template <class Map>
@@ -175,16 +174,6 @@ void map_matches(const std::vector<std::pair<std::uint8_t, std::uint16_t>>& ops)
 RC_GTEST_PROP(IdMapProp, LinearMatchesUnorderedMap,
               (const std::vector<std::pair<std::uint8_t, std::uint16_t>>& ops)) {
     map_matches<LinearMap>(ops);
-}
-
-RC_GTEST_PROP(IdMapProp, RobinHoodMatchesUnorderedMap,
-              (const std::vector<std::pair<std::uint8_t, std::uint16_t>>& ops)) {
-    map_matches<RobinHoodMap>(ops);
-}
-
-RC_GTEST_PROP(IdMapProp, DirectMatchesUnorderedMap,
-              (const std::vector<std::pair<std::uint8_t, std::uint16_t>>& ops)) {
-    map_matches<DirectMap<16>>(ops);
 }
 
 // Level radix against std::map: membership, extremes and in-order iteration.
