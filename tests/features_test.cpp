@@ -115,6 +115,41 @@ std::vector<std::uint8_t> rows(const std::vector<std::vector<std::uint8_t>>& msg
 
 }  // namespace
 
+// Feature rows after every message that reaches the engine, with or without the incremental
+// depth walk.
+std::vector<std::uint8_t> all_rows(const std::vector<std::vector<std::uint8_t>>& msgs,
+                                   bool incremental) {
+    book::TickBook<> b;
+    MarketFeed<> feed(b);
+    FeatureParams p;
+    p.incremental_depth = incremental;
+    SymbolFeatures f(p);
+    std::vector<std::uint8_t> out;
+    for (std::size_t i = 0; i < msgs.size(); ++i) {
+        MarketEvent e;
+        if (!feed.on_itch(msgs[i].data(), msgs[i].size(), i, e)) continue;
+        f.on_event(b, e);
+        const auto* q = reinterpret_cast<const std::uint8_t*>(f.values().data());
+        out.insert(out.end(), q, q + sizeof(SymbolFeatures::Values));
+    }
+    return out;
+}
+
+TEST(Features, IncrementalDepthEqualsTheFullWalkBitForBit) {
+    std::size_t compared = 0;
+    for (std::uint64_t seed : {7, 21, 99}) {
+        std::vector<std::uint8_t> raw;
+        sources::RandomFlow(seed, 4).day(20000, raw);
+        for (std::uint16_t locate = 0; locate <= 4; ++locate) {
+            const auto msgs = symbol_messages(raw, locate);
+            const auto full = all_rows(msgs, false);
+            EXPECT_EQ(all_rows(msgs, true), full) << "seed " << seed << " locate " << locate;
+            compared += full.size() / sizeof(SymbolFeatures::Values);
+        }
+    }
+    EXPECT_GT(compared, 10000u);
+}
+
 // Leakage check of DESIGN.md section 1: features up to t are bit-identical whatever happens
 // after t (events deleted, shuffled, or replaced by unrelated synthetic flow).
 TEST(Features, UnchangedWhenTheFutureIsPerturbed) {
