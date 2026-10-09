@@ -405,7 +405,8 @@ void replay_sym(const std::filesystem::path& dir, const std::vector<std::uint16_
     std::vector<std::pair<std::uint64_t, std::uint16_t>> order;
     for (const std::uint16_t loc : locs) {
         std::uint64_t msgs = 0;
-        for (const auto& c : data::SymbolReader(dir, loc).index()) msgs += c.n_msgs;
+        const data::SymbolReader reader(dir, loc);
+        for (const auto& c : reader.index()) msgs += c.n_msgs;
         order.emplace_back(msgs, loc);
     }
     std::sort(order.rbegin(), order.rend());
