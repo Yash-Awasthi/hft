@@ -366,6 +366,7 @@ nb::dict backtest_run(const std::string& store, std::uint16_t target,
             s.k = param(params, "k", 1.5);
             s.glft = param(params, "glft", 1) != 0;
             s.online = param(params, "online", 0) != 0;
+            s.max_dist_ticks = param(params, "max_dist_ticks", 0);
             s.online_tau_s = param(params, "online_tau_s", 600);
             s.online_prior_s = param(params, "online_prior_s", 60);
             s.size = size;

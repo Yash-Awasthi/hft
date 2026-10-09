@@ -101,6 +101,7 @@ struct AvellanedaStoikov {
     double gamma = 0.1, A = 1.0, k = 1.5;
     bool glft = true;
     bool online = false;
+    double max_dist_ticks = 0;  // caps both quote distances when positive; keep it inside the risk collar
     double online_tau_s = 600, online_prior_s = 60;
     std::uint32_t size = 100;
     std::int64_t max_inventory = 500;
@@ -156,6 +157,7 @@ struct AvellanedaStoikov {
             bid_d = half - r_off;
             ask_d = half + r_off;
         }
+        if (max_dist_ticks > 0) bid_d = std::min(bid_d, max_dist_ticks), ask_d = std::min(ask_d, max_dist_ticks);
         const book::Bbo b = v.book.bbo();
         if (!b.bid_px || !b.ask_px || b.ask_px <= b.bid_px) return;
         // To ticks on the grid, never crossing the opposite best (orders are post-only).

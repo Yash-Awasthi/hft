@@ -104,6 +104,27 @@ TEST(Strategies, AvellanedaStoikovSkewsAgainstInventory) {
     EXPECT_LE(flat.ask_px, 10'0500u + 1000u);
 }
 
+// A distance cap keeps quotes near the mid when the fitted intensity would put them far away.
+TEST(Strategies, AvellanedaStoikovDistanceCap) {
+    book::TickBook<> b;
+    b.add(1, Side::Buy, 100, 10'0000, 1);
+    b.add(2, Side::Sell, 100, 10'0500, 2);
+    std::vector<Working> w;
+    Desired far, near;
+    for (const double cap : {0.0, 3.0}) {
+        AvellanedaStoikov as;
+        as.k = 0.01;  // flat intensity: quotes tens of ticks from the mid
+        as.max_dist_ticks = cap;
+        as.var = 4.0;
+        as.last_mid = 1002.5;
+        as.last_ts = 1;
+        as.decide(View{2, b, nullptr, 0, 1002.5, 0, w, true}, cap ? near : far);
+    }
+    EXPECT_LT(far.bid_px, 10'0000u - 2000u);
+    EXPECT_GE(near.bid_px, 10'0000u - 500u);
+    EXPECT_LE(near.ask_px, 10'0500u + 500u);
+}
+
 // A bid fill after 10 s of quoting raises the fitted intensity; without `online` A, k stay.
 TEST(Strategies, AvellanedaStoikovRecalibratesOnItsFills) {
     book::TickBook<> b;
