@@ -98,8 +98,11 @@ void compress_file(const fs::path& raw) {
     std::string out(ZSTD_compressBound(data.size()), '\0');
     const std::size_t n = ZSTD_compress(out.data(), out.size(), data.data(), data.size(), 6);
     if (ZSTD_isError(n)) return;  // keep the raw file
+    // A restart inside an hour leaves an earlier file for the same hour; keep both, in order.
     fs::path dst = raw;
     dst += ".zst";
+    for (int k = 1; fs::exists(dst); ++k)
+        dst = raw.parent_path() / (raw.stem().string() + "_" + std::to_string(k) + ".jsonl.zst");
     {
         std::ofstream o(dst, std::ios::binary | std::ios::trunc);
         o.write(out.data(), static_cast<std::streamsize>(n));
