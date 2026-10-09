@@ -65,7 +65,7 @@
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_CXX_FLAGS": "-fprofile-use=${sourceDir}/build/pgo-profile -fprofile-correction -Wno-missing-profile"
+        "CMAKE_CXX_FLAGS": "-fprofile-use=${sourceDir}/build/pgo-profile -fprofile-correction -Wno-missing-profile -Wno-restrict"
       }
     }
   ]

@@ -412,7 +412,7 @@ class TickBook {
             }
             // Radix, on tick indices.
             if (kLevels) {
-                std::uint32_t g;
+                std::uint32_t g = 0;
                 const std::uint64_t ceil = (std::uint64_t{px} + tick_ - 1) / tick_;
                 const bool found =
                     s == 0 ? (ceil >= LevelRadix<Level>::kRange
