@@ -215,7 +215,30 @@ std::vector<Market> discover(const std::vector<std::string>& tags, int per_tag, 
 
 struct Stats {
     std::atomic<std::uint64_t> msgs{0}, bytes{0}, reconnects{0};
+    std::atomic<std::int64_t> last_rx_ns{0};
 };
+
+// Health file for monitoring: one JSON object, replaced atomically once a minute.
+void write_status(const fs::path& root, const std::vector<std::unique_ptr<Stats>>& stats, std::size_t tokens) {
+    std::ostringstream o;
+    const std::int64_t now = now_ns();
+    o << "{\"time_ns\":" << now << ",\"tokens\":" << tokens << ",\"disk_bytes\":" << dir_bytes(root)
+      << ",\"connections\":[";
+    for (std::size_t i = 0; i < stats.size(); ++i) {
+        const Stats& s = *stats[i];
+        const std::int64_t rx = s.last_rx_ns;
+        o << (i ? "," : "") << "{\"messages\":" << s.msgs << ",\"bytes\":" << s.bytes << ",\"reconnects\":" << s.reconnects
+          << ",\"last_message_age_s\":" << (rx ? static_cast<double>(now - rx) * 1e-9 : -1.0) << "}";
+    }
+    o << "]}\n";
+    const fs::path tmp = root / "status.json.tmp";
+    {
+        std::ofstream f(tmp, std::ios::trunc);
+        f << o.str();
+    }
+    std::error_code ec;
+    fs::rename(tmp, root / "status.json", ec);
+}
 
 void conn_loop(int idx, std::vector<std::string> tokens, const fs::path& root, std::uintmax_t cap,
                std::atomic<bool>& stop, std::atomic<bool>& cap_hit, EventLog& log, Stats& st) {
@@ -248,6 +271,7 @@ void conn_loop(int idx, std::vector<std::string> tokens, const fs::path& root, s
                     if (msg != "PONG") {
                         w.write(now_ns(), msg);
                         st.msgs++;
+                        st.last_rx_ns = now_ns();
                         st.bytes += msg.size();
                     }
                 }
@@ -381,6 +405,7 @@ int main(int argc, char** argv) {
                 for (auto& s : stats) m += s->msgs, b += s->bytes;
                 log.write("main", "msgs=" + std::to_string(m) + " bytes=" + std::to_string(b) +
                                       " disk=" + std::to_string(dir_bytes(root) >> 20) + "MiB");
+                write_status(root, stats, current.size());
             }
         }
     }
