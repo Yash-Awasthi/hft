@@ -30,6 +30,7 @@ find_package(zstd CONFIG REQUIRED)
 find_package(lz4 CONFIG REQUIRED)
 find_package(zlib-ng CONFIG REQUIRED)
 find_package(Threads REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 add_library(hft_core INTERFACE)
 target_include_directories(hft_core INTERFACE src)

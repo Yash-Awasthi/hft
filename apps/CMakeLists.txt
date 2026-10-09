@@ -30,3 +30,6 @@ target_link_libraries(reinsert PRIVATE hft_core hft_data)
 
 add_executable(transcode transcode.cpp)
 target_link_libraries(transcode PRIVATE hft_core hft_data)
+
+add_executable(pm_record pm_record.cpp)
+target_link_libraries(pm_record PRIVATE hft_core zstd::libzstd OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
