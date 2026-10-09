@@ -1,8 +1,13 @@
 #include <gtest/gtest.h>
 
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <cerrno>
 #include <string>
 
 #include "net/json.hpp"
+#include "net/tls.hpp"
 #include "net/ws_frames.hpp"
 
 using namespace hft::net;
@@ -116,4 +121,14 @@ TEST(Json, RejectsMalformedInput) {
                             "\"\\q\""})
         EXPECT_THROW(parse_json(bad), std::runtime_error) << bad;
     EXPECT_THROW(parse_json(std::string(100, '[')), std::runtime_error);
+}
+
+TEST(Net, WriteToClosedPeerFailsInsteadOfKillingProcess) {
+    TlsConn c;
+    int sv[2];
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, sv), 0);
+    ::close(sv[1]);
+    EXPECT_EQ(::write(sv[0], "x", 1), -1);
+    EXPECT_EQ(errno, EPIPE);
+    ::close(sv[0]);
 }

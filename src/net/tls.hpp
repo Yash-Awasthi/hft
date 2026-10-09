@@ -8,6 +8,7 @@
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <poll.h>
+#include <signal.h>
 #include <sys/random.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -27,7 +28,8 @@ namespace hft::net {
 
 class TlsConn {
    public:
-    TlsConn() = default;
+    // OpenSSL writes with write(2); a peer reset would otherwise kill the process with SIGPIPE.
+    TlsConn() { ::signal(SIGPIPE, SIG_IGN); }
     TlsConn(const TlsConn&) = delete;
     TlsConn& operator=(const TlsConn&) = delete;
     ~TlsConn() { close(); }

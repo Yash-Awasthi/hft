@@ -9,7 +9,7 @@ add_executable(hft_tests endian_test.cpp itch_test.cpp store_test.cpp gzip_test.
                          trades_test.cpp event_tokens_test.cpp
                          event_transformer_test.cpp intensity_test.cpp net_test.cpp pm_test.cpp)
 target_link_libraries(hft_tests PRIVATE hft_core hft_data GTest::gtest_main rapidcheck tlx
-                                        hft_experiment zstd::libzstd)
+                                        hft_experiment zstd::libzstd OpenSSL::SSL OpenSSL::Crypto)
 target_compile_definitions(hft_tests PRIVATE HFT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 gtest_discover_tests(hft_tests)
 # RapidCheck instantiates the deprecated std::aligned_storage in user translation units.
