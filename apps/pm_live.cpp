@@ -1,6 +1,6 @@
 // Live paper trading on the prediction-market order-book stream, and replay of its recordings.
 //
-//   pm_live [--events N] [--max-tokens N] [--tokens-per-conn N] [--port P] [--record DIR]
+//   pm_live [--events N] [--max-tokens N] [--tokens-per-conn N] [--port P] [--record DIR [--record-cap-gb G]]
 //           [--seconds S] [--cpu C] [--spin] [--no-quote] [maker and risk options]
 //   pm_live --replay DIR [maker and risk options]
 //
@@ -59,7 +59,8 @@ using namespace hft::pm;
 namespace {
 
 std::atomic<bool> g_stop{false};
-void on_signal(int) { g_stop = true; }
+std::atomic<int> g_signal{0};
+void on_signal(int sig) { g_signal = sig, g_stop = true; }
 
 std::int64_t now_ns() {
     timespec ts;
@@ -75,7 +76,7 @@ struct Options {
     EngineParams engine;
     int events = 40, max_tokens = 200, tokens_per_conn = 50, port = 8088, cpu = -1;
     bool spin = false;  // busy-poll the rings instead of sleeping on the doorbell
-    double seconds = 0;
+    double seconds = 0, record_cap_gb = 20;
     fs::path record, replay;
 };
 
@@ -219,27 +220,26 @@ void feed_loop(Feed& f) {
 
 // ---------------------------------------------------------------- recording thread
 
-// Writes every record the trading thread processed, in its order, as "<ns> <json>" lines,
-// then compresses the file. One file per run, so a replay sees exactly the live order.
+// Writes every record the trading thread processed, in its order, as "<ns> <json>" lines in
+// hourly files (by receive time) under DIR/c0, compressing each when its hour ends. One
+// connection directory, so a replay sees exactly the live order. Writing stops, and trading
+// goes on, once the directory reaches the size cap.
 class Recorder {
    public:
-    explicit Recorder(const fs::path& dir) : ring_(1 << 24) {
+    Recorder(const fs::path& dir, double cap_gb)
+        : dir_(dir), cap_(static_cast<std::uintmax_t>(cap_gb * 1e9)), ring_(1 << 24) {
         fs::create_directories(dir / "c0");
-        path_ = dir / "c0" / (utc_time(std::time(nullptr), "%Y%m%dT%H%M%S") + ".jsonl");
-        f_ = std::fopen(path_.c_str(), "wb");
-        if (!f_) throw std::runtime_error("cannot write " + path_.string());
-        std::setvbuf(f_, nullptr, _IOFBF, 1 << 20);
         thread_ = std::thread([this] { run(); });
     }
     ~Recorder() {
         done_ = true;
         thread_.join();
-        std::fclose(f_);
-        compress();
+        rotate(-1);
     }
     void write(std::int64_t ns, std::string_view text) {
         while (!ring_.try_write(ns, 0, 0, text)) std::this_thread::yield();
     }
+    bool capped() const { return capped_; }
 
    private:
     void run() {
@@ -247,31 +247,62 @@ class Recorder {
         for (;;) {
             const bool last = done_;  // read before draining, so nothing written after it is missed
             while (ring_.try_read(r)) {
-                std::fprintf(f_, "%lld ", static_cast<long long>(r.ns));
-                std::fwrite(r.data.data(), 1, r.data.size(), f_);
-                std::fputc('\n', f_);
+                const std::int64_t hour = r.ns / 3'600'000'000'000;
+                if (hour != hour_) rotate(hour);
+                if (f_) {
+                    std::fprintf(f_, "%lld ", static_cast<long long>(r.ns));
+                    std::fwrite(r.data.data(), 1, r.data.size(), f_);
+                    std::fputc('\n', f_);
+                }
                 ring_.release();
             }
             if (last) break;
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
     }
-    void compress() {
-        std::ifstream in(path_, std::ios::binary);
+    void rotate(std::int64_t hour) {
+        if (f_) {
+            std::fclose(f_);
+            f_ = nullptr;
+            compress(path_);
+        }
+        hour_ = hour;
+        if (hour < 0 || capped_) return;
+        std::uintmax_t used = 0;
+        std::error_code ec;
+        for (const auto& e : fs::recursive_directory_iterator(dir_, ec))
+            if (e.is_regular_file(ec)) used += e.file_size(ec);
+        if (used >= cap_) {
+            capped_ = true;
+            std::fprintf(stderr, "recording stopped at the size cap\n");
+            return;
+        }
+        path_ = dir_ / "c0" / (utc_time(static_cast<std::time_t>(hour * 3600), "%Y%m%dT%H") + ".jsonl");
+        f_ = std::fopen(path_.c_str(), "ab");
+        if (!f_) throw std::runtime_error("cannot write " + path_.string());
+        std::setvbuf(f_, nullptr, _IOFBF, 1 << 20);
+    }
+    static void compress(const fs::path& p) {
+        std::ifstream in(p, std::ios::binary);
         const std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         std::string out(ZSTD_compressBound(data.size()), '\0');
         const std::size_t n = ZSTD_compress(out.data(), out.size(), data.data(), data.size(), 6);
-        if (ZSTD_isError(n)) return;
-        fs::path dst = path_;
+        if (ZSTD_isError(n)) return;  // keep the raw file
+        fs::path dst = p;
         dst += ".zst";
+        for (int k = 1; fs::exists(dst); ++k)  // the same hour reopened after a clock step
+            dst = p.parent_path() / (p.stem().string() + "_" + std::to_string(k) + ".jsonl.zst");
         std::ofstream(dst, std::ios::binary).write(out.data(), static_cast<std::streamsize>(n));
-        fs::remove(path_);
+        fs::remove(p);
     }
 
+    fs::path dir_, path_;
+    std::uintmax_t cap_;
     SpscBytes ring_;
-    fs::path path_;
     std::FILE* f_ = nullptr;
+    std::int64_t hour_ = -1;
     std::atomic<bool> done_{false};
+    std::atomic<bool> capped_{false};
     std::thread thread_;
 };
 
@@ -481,7 +512,7 @@ int live(const Options& o) {
     if (!o.record.empty()) {
         fs::create_directories(o.record);
         s.save(o.record / "session.tsv");
-        rec = std::make_unique<Recorder>(o.record);
+        rec = std::make_unique<Recorder>(o.record, o.record_cap_gb);
     }
     Engine e(o.engine);
     s.apply(e);
@@ -608,6 +639,7 @@ int main(int argc, char** argv) {
         else if (a == "--tokens-per-conn") o.tokens_per_conn = std::max(1, static_cast<int>(num()));
         else if (a == "--port") o.port = static_cast<int>(num());
         else if (a == "--record") o.record = val();
+        else if (a == "--record-cap-gb") o.record_cap_gb = num();
         else if (a == "--replay") o.replay = val();
         else if (a == "--seconds") o.seconds = num();
         else if (a == "--cpu") o.cpu = static_cast<int>(num());
@@ -629,7 +661,8 @@ int main(int argc, char** argv) {
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
     try {
-        return o.replay.empty() ? live(o) : replay(o);
+        const int rc = o.replay.empty() ? live(o) : replay(o);
+        return g_signal ? 128 + g_signal : rc;  // a stop request is not a crash to restart after
     } catch (const std::exception& ex) {
         std::fprintf(stderr, "error: %s\n", ex.what());
         return 1;
