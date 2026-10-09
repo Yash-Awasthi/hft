@@ -1,5 +1,8 @@
 # MS2: order book study
 
+Historical record. Only the `tick` book (and `std::map` as the test reference) remains in
+the code; the other variants compared here were removed on 2026-10-09 after this study.
+
 All books produce identical BBO streams on every symbol of 2025-11-28 (12,076 symbols, 353M
 messages; seven implementations against `std::map`) and of 2025-12-08 (12,103 symbols, 650M
 messages; tick book against `std::map`). An independent Python book agrees on 201 sampled
@@ -7,7 +10,7 @@ symbols plus GOOGL.
 
 ## Caveats
 
-- Wall-clock figures are the baseline of DESIGN.md section 9: laptop on mains, idle,
+- Wall-clock figures are the baseline of archive/docs/DESIGN.md section 9: laptop on mains, idle,
   maximum processor state 99% for every core class and boost mode off in the Windows power
   plan (turbo off; a chain of dependent multiplies runs at about 2.4 GHz on every virtual CPU
   tried, against 4.7 GHz before). Timed runs pinned with `taskset` (one virtual CPU; two for

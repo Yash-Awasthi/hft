@@ -1,68 +1,34 @@
 # Status
 
-Working log for [docs/ROADMAP.md](docs/ROADMAP.md). The log of the research phase is in
+Open work for [docs/ROADMAP.md](docs/ROADMAP.md). Finished work is in the git history and in
+README "Performance"; the research-phase log is in
 [archive/docs/STATUS-research.md](archive/docs/STATUS-research.md).
 
-## Done
+## Running
 
-- P0: `pm_record` no longer dies with SIGPIPE when a peer resets the connection (two exits
-  with code 141 on 2026-10-09).
-- P1: research code, experiment registry, transformer and study apps moved to `archive/`;
-  tlx, toml++, SQLite and nanobind dropped from the build.
-- P2: `native` preset (`-march=native -flto -ffp-contract=off`; the profile-guided presets use
-  the same flags). All 216 tests pass. Per-symbol replay of the 50 busiest symbols on
-  2025-12-10 (197.8M events, one thread, LZ4 store, turbo on, three alternating runs):
-  14.20 s release, 13.73 s native (-3.3%). `-ffp-contract=off` keeps floating-point results
-  equal to the generic build. Pinning inside WSL2 selects a virtual CPU; the host decides
-  whether it runs on a P-core. Profile-guided on top of native and LTO (trained on the
-  ITCH store and a prediction-market recording) changes nothing beyond noise: per-symbol
-  replay 13.71 s native against 13.84 s PGO, `pm_stats` 1.95 s against 1.94 s (two runs
-  each). The earlier 10% PGO gain was over the generic build.
+- Recorder (`pm_record`), started by the Windows logon task: 32 markets (64 tokens), hourly
+  zstd files in `~/data/pm`, 50 GB cap, health in `status.json`.
+- `pm_live` under `scripts/pm_live_supervise.sh ~/data/pm-live --record-cap-gb 20 --port 8088
+  --seconds 21600`, started by hand (a reboot stops it). Dashboard at http://127.0.0.1:8088/.
+  To stop it, kill the supervisor first, then `pm_live`.
 
-- P3: prediction-market path rebuilt for speed. On a fixed 2.0M-message recording (1.3 GB of
-  JSON, 18 hour files), native build, best of two runs:
+## Open
 
-  | Tool | Before | After | Peak memory |
-  |---|---|---|---|
-  | `pm_stats` | 11.0 s | 1.93 s | 469 MB to 31 MB |
-  | `pm_mm` | 10.8 s | 1.67 s | 469 MB to 32 MB |
-
-  Outputs are identical to the old tools (row order among ties now breaks on the token id).
-  What changed: a tape JSON parser (`src/net/tape.hpp`; AVX2 character classes, escaped
-  quotes by the odd-backslash-run rule, string interiors by a carry-less multiply prefix xor,
-  scalar starts emitted as tokens so stage 2 never scans blanks) that accepts exactly what
-  the tree reader accepts; a typed message decoder that reads each object once; a flat
-  10,001-slot book per side with a two-level bitmap; dense token indices; zstd decompression
-  on a second thread behind a single-producer single-consumer ring. zstd alone takes about
-  1.1 s of the remaining time on one core. HdrHistogram replaced by a 60-line log-linear
-  histogram.
-
-- P4: `pm_live`, a live paper-trading pipeline: feed thread per connection into lock-free
-  byte rings, a futex doorbell, a trading thread (tape parser, flat books, makers with paper
-  fills, portfolio risk with loss stop, gross cap and stale-feed pause, reconnect
-  invalidation, arbitrage scanner over complete negRisk events and Yes/No pairs), a
-  recording thread and a loopback HTTP server with Prometheus metrics and a dashboard.
-  Replay of a recorded session gives the same decision hash as the live run (two 60 s and
-  one 90 s session checked). First sessions: 88 tokens in 5 events, no arbitrage window
-  and no paper fill in 90 s.
-
-- Book variants removed: `TickBook` is now one class (linear-probing order-ID map, hot/cold
-  order records, 2,048-tick window); the Robin Hood and direct-mapped ID maps, the AoS and
-  SoA layouts and the sorted-vector book are gone (382 lines). `std::map` stays as the
-  test reference. Full-day BBO output over 12,116 symbols is byte-identical, checkpoints
-  verify, and per-symbol replay is unchanged within noise (13.06 s). Their earlier
-  comparison stays in `docs/results/ms2-book-study.md`.
-
-## In progress
-
-- `pm_live` running since 2026-10-09 13:58 UTC under `scripts/pm_live_supervise.sh
-  ~/data/pm-live --record-cap-gb 20 --port 8088 --seconds 21600` (started by hand, not by the
-  logon task, so a reboot stops it). Dashboard at http://127.0.0.1:8088/. To stop it, kill
-  the supervisor first, then `pm_live`.
-- Recorder running since 2026-10-09 under the logon task, 32 markets (64 tokens), hourly zstd
-  files in `$HFT_DATA/pm`, 50 GB cap.
+1. The ITCH trading stack has no program: `src/backtest`, `src/strategy`, the matching
+   engine and the replay exchange are reached only by tests since the Python module was
+   archived. Either add an `itch_backtest` app (strategy, day, PnL, fills, latency) or move
+   the stack to `archive/`.
+2. Research-only headers still in the build, used by tests alone: `strategy/labeler.hpp`,
+   `strategy/grid.hpp`, `strategy/qr_events.hpp`, `sources/queue_reactive.hpp`. Decide
+   with item 1.
+3. After 2 to 3 days of `pm_live` recordings: report arbitrage windows (count, duration,
+   edge, size) and paper fills per event; an offline `pm_arb` over the recordings.
+4. After about two weeks of recorder data: `pm_stats` and `pm_mm` over the full recording.
+5. `pm_live` has no test for its session file and hourly rotation (both checked by hand).
 
 ## Needs the owner
 
-- Hardware counters: the WSL2 guest has no PMU; timed runs with `perf stat` need bare Linux.
-- Real order entry is out of scope until there is an account and a decision to trade.
+- A Windows logon task for `pm_live`, like the recorder's, so it survives a reboot.
+- A bare-Linux run for hardware counters and futex wake latency (WSL2: about 135 µs).
+- Real order entry: an account, signing keys and the decision to trade.
+- Hosting for a results page, if one is wanted.

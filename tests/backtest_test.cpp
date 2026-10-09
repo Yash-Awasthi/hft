@@ -209,10 +209,10 @@ TEST(Grid, StepsCoverTheWindowAndCountExecutionsAtTheBest) {
     EXPECT_GT(exec, 0);
 }
 
-// Table layout of research/dp.py export: [q][bid queue][ask queue][imbalance][spread][signal].
+// Table layout of archive/research/dp.py export: [q][bid queue][ask queue][imbalance][spread][signal].
 namespace {
 
-// Writes a small policy table in the research/dp.py layout: [q][bid queue][ask queue]
+// Writes a small policy table in the archive/research/dp.py layout: [q][bid queue][ask queue]
 // [imbalance][spread][signal], signal weights w on two features.
 std::string write_table(const TempDir& dir, double w0, double w1) {
     const std::string path = (dir.path / "t.bin").string();

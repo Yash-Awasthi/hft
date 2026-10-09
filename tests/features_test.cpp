@@ -150,7 +150,7 @@ TEST(Features, IncrementalDepthEqualsTheFullWalkBitForBit) {
     EXPECT_GT(compared, 10000u);
 }
 
-// Leakage check of DESIGN.md section 1: features up to t are bit-identical whatever happens
+// Leakage check of archive/docs/DESIGN.md section 1: features up to t are bit-identical whatever happens
 // after t (events deleted, shuffled, or replaced by unrelated synthetic flow).
 TEST(Features, UnchangedWhenTheFutureIsPerturbed) {
     std::vector<std::uint8_t> raw, other;

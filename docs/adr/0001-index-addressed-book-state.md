@@ -7,7 +7,7 @@ Accepted, 2026-10-07.
 ## Context
 
 The book must fork by `memcpy` (C4, N2), avoid heap allocation after start-up and update in
-tens of nanoseconds. DESIGN.md section 9 specifies a dense window of price levels around the
+tens of nanoseconds. archive/docs/DESIGN.md section 9 specifies a dense window of price levels around the
 mid with a bitmap, and an overflow map for prices far outside it.
 
 On 2025-11-28 the busiest symbols keep thousands of levels outside a 2,048-tick window
