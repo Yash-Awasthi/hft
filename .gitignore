@@ -3,3 +3,4 @@ vcpkg_installed/
 compile_commands.json
 __pycache__/
 .venv/
+site/

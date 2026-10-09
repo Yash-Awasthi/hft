@@ -67,6 +67,13 @@ task finishes or blocks.
 
 ## In progress
 
+- Prediction-market recorder (`pm_record`) runs on this machine under a logon task, writing
+  hourly zstd files to `$HFT_DATA/pm` with a 50 GB cap: 32 markets (top by 24 h volume in
+  sports, politics, crypto, economy), refreshed every 6 h. `pm_stats` rebuilds each token's
+  book and reports spread, depth, trades and consistency (0.03% of deltas differ from the
+  exchange's best prices). About 7 MB/min raw, about 0.7 GB/day compressed.
+- `scripts/showcase.sh` builds a static results page (`site/`); `scripts/pgo.sh` builds
+  profile-guided binaries.
 - Second optimisation pass merged 2026-10-09 (PR #1): replay lookahead, transformer kernels,
   backtest and exchange hot paths, incremental depth features, LZ4-HC store codec,
   `transcode`, per-symbol replay on a thread pool. Same-session before/after in README
@@ -163,6 +170,7 @@ task finishes or blocks.
 | MS6 | Ablation vs ext, small-tick | - | no toxicity +$234, no taking +$287, both removed (dp_signal) +$318 | same |
 | MS6 | Latency 0 to 500 us, ext | - | large-tick -$0.99 to -$16.46; small-tick -$4,176 to -$3,947 | same |
 | MS6 | AS small-tick | quotes | 0 orders: fitted k 0.027/tick gives 21.0-tick distance, collar 20 ticks rejects all (miss) | same |
+| MS6 | AS small-tick with `max_dist_ticks` 19 (`as_capped`), validation day, TSLA / MSFT / AVGO / GOOG | quotes | quotes: 63k to 136k orders, 60 to 570 fills per stock-day; PnL -$452 to +$850 (one day, four stocks, not a result) | `$HFT_DATA/runs/val-as-capped` |
 | MS6 | AS with online A/k (`as_online`), large-tick | - | -$53.05 [-96.76, -13.98] vs AS -$54.28; 430 vs 217 fills; -0.30 vs -0.61 c/share; small-tick still 0 orders (no fills, no refit) | `$HFT_DATA/runs/val-as-online` |
 | MS6 | Fee schedule, naive large-tick, queue rule | - | cap30 -$553 [-1,139, -167], cap10 -$929 [-1,283, -613] | `docs/results/ms6-backtest.md` |
 | MS6 | AS closed forms vs numerical HJB | match | max 1.8e-12 ticks at 23,400 s | `research/hjb.py` |
