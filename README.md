@@ -37,8 +37,9 @@ forecaster, pre-registration) are kept out of the build under [archive/](archive
 | Matching engine | `src/engine/matching.hpp` | Price-time; property-tested against a naive reference |
 | Replay exchange | `src/engine/replay_exchange.hpp` | Virtual orders in real queues; queue, trade-through and hidden-print fill rules |
 | Backtest | `src/backtest/` | Event-driven; zero, random, foresight, naive, Avellaneda-Stoikov (GLFT), DP strategies |
-| Network | `src/net/` | TLS socket (OpenSSL for the cipher layer only), HTTP/1.1 GET, WebSocket framing, SHA-1, base64, JSON reader |
-| Prediction markets | `src/pm/`, `apps/pm_*.cpp` | Recorder, book rebuild, logit Avellaneda-Stoikov maker |
+| Network | `src/net/` | TLS socket (OpenSSL for the cipher layer only), HTTP/1.1 GET, WebSocket framing, SHA-1, base64; tape JSON parser with an AVX2 first stage |
+| Prediction markets | `src/pm/`, `apps/pm_*.cpp` | Recorder, typed message decoder, flat bitmap book, book rebuild, logit Avellaneda-Stoikov maker |
+| Core | `src/core/` | Index-addressed pools, SPSC ring, log-linear histogram, `rdtscp` timing, Philox RNG |
 
 Every piece of engine state lives in index-addressed pools, so a book or engine fork is a
 copy of the used part of each pool with no pointer fix-up. Replay is single-threaded and
@@ -46,7 +47,7 @@ deterministic per symbol; zstd/LZ4 chunks are decompressed ahead of it and hande
 sequence order, so the merged stream stays byte-identical to the download.
 
 Third-party code at run time: zstd, LZ4 and zlib-ng for storage, OpenSSL for TLS.
-GoogleTest, RapidCheck, Google Benchmark and HdrHistogram are used by tests and benchmarks only.
+GoogleTest, RapidCheck and Google Benchmark are used by tests and benchmarks only.
 
 ## Performance
 
@@ -161,6 +162,11 @@ pm_record --out data/pm --cap-gb 50 --per-tag 8
 pm_stats data/pm > tokens.tsv     # per-token book rebuild: spread, depth, trades, consistency
 pm_mm data/pm > mm.tsv            # logit Avellaneda-Stoikov maker on the recorded books
 ```
+
+Both tools read a recording at about 1M messages per second: zstd decompression runs on a second
+thread, a tape JSON parser with an AVX2 first stage feeds a typed decoder, and each token's book
+is a flat price array with a two-level bitmap (on 2.0M messages, `pm_stats` went from 11.0 s and
+469 MB to 1.9 s and 31 MB with identical output).
 
 `pm_stats` checks its rebuilt book against the exchange's own best prices (0.03% of deltas
 differ in a 20-minute sample). `pm_mm` fills quotes from recorded trades only, with a

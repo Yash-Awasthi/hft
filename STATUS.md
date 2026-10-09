@@ -16,6 +16,24 @@ Working log for [docs/ROADMAP.md](docs/ROADMAP.md). The log of the research phas
   equal to the generic build. Pinning inside WSL2 selects a virtual CPU; the host decides
   whether it runs on a P-core.
 
+- P3: prediction-market path rebuilt for speed. On a fixed 2.0M-message recording (1.3 GB of
+  JSON, 18 hour files), native build, best of two runs:
+
+  | Tool | Before | After | Peak memory |
+  |---|---|---|---|
+  | `pm_stats` | 11.0 s | 1.93 s | 469 MB to 31 MB |
+  | `pm_mm` | 10.8 s | 1.67 s | 469 MB to 32 MB |
+
+  Outputs are identical to the old tools (row order among ties now breaks on the token id).
+  What changed: a tape JSON parser (`src/net/tape.hpp`; AVX2 character classes, escaped
+  quotes by the odd-backslash-run rule, string interiors by a carry-less multiply prefix xor,
+  scalar starts emitted as tokens so stage 2 never scans blanks) that accepts exactly what
+  the tree reader accepts; a typed message decoder that reads each object once; a flat
+  10,001-slot book per side with a two-level bitmap; dense token indices; zstd decompression
+  on a second thread behind a single-producer single-consumer ring. zstd alone takes about
+  1.1 s of the remaining time on one core. HdrHistogram replaced by a 60-line log-linear
+  histogram.
+
 ## In progress
 
 - Recorder running since 2026-10-09 under the logon task, 32 markets (64 tokens), hourly zstd
