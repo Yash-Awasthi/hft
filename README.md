@@ -169,7 +169,8 @@ test, fuzzes the decoder for 30 s, and runs the Python suites against the built 
 
 ## Build and run
 
-Requires CMake, Ninja, a C++23 compiler and `VCPKG_ROOT` pointing at a vcpkg checkout.
+Requires CMake, Ninja, a C++23 compiler, OpenSSL development files (only the recorder uses them)
+and `VCPKG_ROOT` pointing at a vcpkg checkout.
 
 ```
 cmake --preset release
@@ -203,6 +204,27 @@ python research/backtests.py <py-build> --name <sweep> --days <YYYY-MM-DD>...
 ```
 
 `research/count_itch.c` is an independent message counter used to cross-check the decoder.
+
+## Prediction markets
+
+`pm_record` stores the public order-book stream of a prediction-market exchange: a hand-written
+WebSocket client (framing, SHA-1, base64, a small JSON reader; OpenSSL carries only the TLS
+bytes) writes one line per message with the receive time to hourly zstd files, picks the
+markets with the most volume per tag, reconnects with backoff, logs every gap and stops at a
+size cap. `scripts/pm_supervise.sh <dir>` restarts it after a crash; `status.json` in the
+record directory holds message counts and the age of the last message per connection.
+
+```
+pm_record --out data/pm --cap-gb 50 --per-tag 8
+pm_stats data/pm > tokens.tsv     # per-token book rebuild: spread, depth, trades, consistency
+pm_mm data/pm > mm.tsv            # logit Avellaneda-Stoikov maker on the recorded books
+scripts/showcase.sh data/pm       # static results page in site/
+```
+
+`pm_stats` rebuilds each outcome's book from snapshots and deltas and checks it against the
+exchange's own best prices (0.03% of deltas differ in a 20-minute sample). `pm_mm` fills quotes
+from recorded trades only, with a queue-ahead count per order, so its fills are conservative;
+inventory is valued at the last mid.
 
 ## Research
 
