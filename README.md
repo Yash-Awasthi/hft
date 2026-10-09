@@ -132,7 +132,7 @@ cmake --build build/release
 ctest --test-dir build/release
 ```
 
-Presets: `debug`, `release`, `asan`, `ubsan`, `tsan`, `fuzz`, `pgo-gen`, `pgo-use`.
+Presets: `debug`, `release`, `native` (this CPU, LTO), `asan`, `ubsan`, `tsan`, `fuzz`, `pgo-gen`, `pgo-use`.
 
 Ingest one ITCH day into a per-symbol store (download, verify, ingest):
 

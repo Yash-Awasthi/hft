@@ -11,12 +11,25 @@
     {
       "name": "debug",
       "inherits": "base",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
     },
     {
       "name": "release",
       "inherits": "base",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "native",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_FLAGS": "-march=native -ffp-contract=off",
+        "CMAKE_INTERPROCEDURAL_OPTIMIZATION": "ON"
+      }
     },
     {
       "name": "asan",
@@ -57,7 +70,8 @@
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_CXX_FLAGS": "-fprofile-generate=${sourceDir}/build/pgo-profile -fprofile-update=atomic"
+        "CMAKE_CXX_FLAGS": "-march=native -ffp-contract=off -fprofile-generate=${sourceDir}/build/pgo-profile -fprofile-update=atomic",
+        "CMAKE_INTERPROCEDURAL_OPTIMIZATION": "ON"
       }
     },
     {
@@ -65,7 +79,8 @@
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_CXX_FLAGS": "-fprofile-use=${sourceDir}/build/pgo-profile -fprofile-correction -Wno-missing-profile -Wno-restrict"
+        "CMAKE_CXX_FLAGS": "-march=native -ffp-contract=off -fprofile-use=${sourceDir}/build/pgo-profile -fprofile-correction -Wno-missing-profile -Wno-restrict",
+        "CMAKE_INTERPROCEDURAL_OPTIMIZATION": "ON"
       }
     }
   ]

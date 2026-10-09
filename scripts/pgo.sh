@@ -11,6 +11,5 @@ b=build/pgo-gen
 HFT_LOOKAHEAD=8 HFT_BIGPOOL=1 "$b/bench/book_study" "$store" replay 50 1 1 >/dev/null
 HFT_BIGPOOL=1 "$b/bench/book_study" "$store" replay-sym 50 1 1 >/dev/null
 "$b/apps/book_replay" "$store" tick >/dev/null
-"$b/bench/hft_bench" --benchmark_filter=EventStep --benchmark_min_time=0.2s >/dev/null
 cmake --preset pgo-use
 cmake --build build/pgo-use
