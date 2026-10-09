@@ -119,6 +119,10 @@ with each other but not with the table above, whose clock drifted between sessio
 The merged-feed replay lookahead is used only by `bench/book_study.cpp`; the production
 replays are per symbol. The shared clock decay in the feature engine changes features in the
 last bits, so research outputs regenerated after it can differ in the last digits.
+Profile-guided build (`pgo-gen`, run `book_study replay` and `replay-sym`, then `pgo-use`): per-symbol
+replay of the 50 busiest symbols 11.7 s to 10.6 s (-10%, two runs each, one thread); the merged
+replay is unchanged within noise. A lookahead prefetch on the per-symbol path was slower
+(10.5 s to 11.7 s) and was dropped.
 
 Book variants (`std::map`, Robin Hood and direct-mapped ID maps, AoS / SoA / hot-cold
 layouts, sorted vector, B-tree) are compared in
