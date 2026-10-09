@@ -9,7 +9,7 @@ using hft::SpscRing;
 
 TEST(Spsc, FullAndEmptyAtCapacity) {
     SpscRing<int, 4> r;
-    int v;
+    int v = -1;
     EXPECT_FALSE(r.try_pop(v));
     for (int i = 0; i < 4; ++i) EXPECT_TRUE(r.try_push(i));
     EXPECT_FALSE(r.try_push(9));
@@ -104,7 +104,7 @@ TEST(Doorbell, WakesASleepingConsumerAndTimesOut) {
     static SpscRing<int, 1024> q;
     std::atomic<int> got{0};
     std::thread consumer([&] {
-        int v;
+        int v = -1;
         while (got < 1000) {
             const std::uint32_t s = bell.snapshot();
             if (q.try_pop(v)) {

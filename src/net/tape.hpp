@@ -111,7 +111,7 @@ class JsonTape {
         void reserve(std::size_t n) {
             if (n <= cap_) return;
             auto d = std::make_unique_for_overwrite<T[]>(n);
-            std::memcpy(d.get(), d_.get(), n_ * sizeof(T));
+            if (n_) std::memcpy(d.get(), d_.get(), n_ * sizeof(T));
             d_ = std::move(d), cap_ = n;
         }
         void clear() { n_ = 0; }

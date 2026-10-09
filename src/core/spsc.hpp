@@ -49,7 +49,7 @@ class SpscRing {
         for (int spins = 0; !try_push(v); ++spins) wait(spins);
     }
     T pop() {
-        T v;
+        T v{};
         for (int spins = 0; !try_pop(v); ++spins) wait(spins);
         return v;
     }
