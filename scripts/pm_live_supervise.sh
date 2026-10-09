@@ -7,6 +7,9 @@ dir=${1:?data dir}
 shift
 bin="$(cd "$(dirname "$0")/.." && pwd)/build/native/apps/pm_live"
 mkdir -p "$dir"
+# One supervisor per directory: a second start (another logon) exits at once.
+exec 9>"$dir/.supervisor.lock"
+flock -n 9 || { echo "already running for $dir" >&2; exit 0; }
 while true; do
   run="$dir/$(date -u +%Y%m%dT%H%M%SZ)"
   "$bin" --record "$run" "$@" >"$run.summary.tsv" 2>"$run.log"
