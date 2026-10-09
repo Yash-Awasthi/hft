@@ -132,3 +132,60 @@ TEST(Net, WriteToClosedPeerFailsInsteadOfKillingProcess) {
     EXPECT_EQ(errno, EPIPE);
     ::close(sv[0]);
 }
+
+#include <arpa/inet.h>
+#include <netinet/in.h>
+
+#include <atomic>
+#include <thread>
+
+#include "net/http_server.hpp"
+
+namespace {
+
+std::string http_fetch(std::uint16_t port, const std::string& request) {
+    const int s = ::socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in a{};
+    a.sin_family = AF_INET;
+    a.sin_port = htons(port);
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (::connect(s, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0) return "connect failed";
+    ::send(s, request.data(), request.size(), MSG_NOSIGNAL);
+    std::string out;
+    char buf[1024];
+    for (ssize_t n; (n = ::recv(s, buf, sizeof buf, 0)) > 0;) out.append(buf, static_cast<std::size_t>(n));
+    ::close(s);
+    return out;
+}
+
+}  // namespace
+
+TEST(Http, RequestPath) {
+    EXPECT_EQ(request_path("GET /metrics HTTP/1.1\r\n"), "/metrics");
+    EXPECT_EQ(request_path("GET /m?x=1 HTTP/1.1\r\n"), "/m");
+    EXPECT_EQ(request_path("POST /m HTTP/1.1\r\n"), "");
+    EXPECT_EQ(request_path("GET /m"), "");
+}
+
+TEST(Http, ServesRoutesOnLoopback) {
+    HttpServer srv;
+    ASSERT_TRUE(srv.listen(0));
+    std::atomic<bool> stop{false};
+    std::thread t([&] {
+        while (!stop)
+            srv.poll_once(50, [](std::string_view p) {
+                if (p == "/metrics") return HttpResponse{200, "text/plain", "up 1\n"};
+                return HttpResponse{404, "text/plain", "no\n"};
+            });
+    });
+    const std::string ok = http_fetch(srv.port(), "GET /metrics HTTP/1.1\r\nHost: x\r\n\r\n");
+    const std::string missing = http_fetch(srv.port(), "GET /nope HTTP/1.1\r\n\r\n");
+    const std::string post = http_fetch(srv.port(), "POST /metrics HTTP/1.1\r\n\r\n");
+    stop = true;
+    t.join();
+    EXPECT_TRUE(ok.starts_with("HTTP/1.1 200 OK\r\n")) << ok;
+    EXPECT_TRUE(ok.ends_with("\r\n\r\nup 1\n")) << ok;
+    EXPECT_NE(ok.find("Content-Length: 5\r\n"), std::string::npos);
+    EXPECT_TRUE(missing.starts_with("HTTP/1.1 404 ")) << missing;
+    EXPECT_TRUE(post.starts_with("HTTP/1.1 405 ")) << post;
+}

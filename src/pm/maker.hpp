@@ -46,6 +46,13 @@ class TokenMaker {
     }
     void on_level(std::int64_t ns) { update(ns); }
 
+    // Risk switch: a disabled maker cancels its quotes and places none until enabled again.
+    void set_enabled(bool on) {
+        enabled_ = on;
+        if (!on) cancel(bid_), cancel(ask_);
+    }
+    bool enabled() const { return enabled_; }
+
     // `taker_buy`: the aggressor bought, so it consumes asks.
     void on_trade(std::int64_t ns, bool taker_buy, std::int32_t px, double size) {
         Order& o = taker_buy ? ask_ : bid_;
@@ -73,6 +80,7 @@ class TokenMaker {
     }
 
     double pnl() const { return cash_ + inv_ * last_mid_; }  // inventory at the last mid
+    double mid() const { return last_mid_; }
     double inventory() const { return inv_; }
     double max_abs_inventory() const { return max_abs_inv_; }
     std::uint64_t buys() const { return buys_; }
@@ -117,7 +125,7 @@ class TokenMaker {
         for (Order* o : {&bid_, &ask_}) {  // a level cannot be deeper than what is displayed
             if (o->px >= 0) o->ahead = std::min(o->ahead, book.size_at(o == &bid_, o->px));
         }
-        if (static_cast<double>(ns - start_ns_) * 1e-9 < p_.warmup_s) return;
+        if (!enabled_ || static_cast<double>(ns - start_ns_) * 1e-9 < p_.warmup_s) return;
         if (mid < p_.min_mid || mid > p_.max_mid) {
             cancel(bid_), cancel(ask_);
             return;
@@ -145,6 +153,7 @@ class TokenMaker {
     double var_, last_mid_ = 0, cash_ = 0, inv_ = 0, max_abs_inv_ = 0, shares_ = 0;
     std::int64_t start_ns_ = 0, last_ns_ = 0, last_quote_ns_ = 0;
     std::uint64_t buys_ = 0, sells_ = 0, quotes_ = 0;
+    bool enabled_ = true;
 };
 
 }  // namespace hft::pm

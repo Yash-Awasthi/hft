@@ -33,3 +33,6 @@ target_link_libraries(pm_stats PRIVATE hft_core zstd::libzstd)
 
 add_executable(pm_mm pm_mm.cpp)
 target_link_libraries(pm_mm PRIVATE hft_core zstd::libzstd)
+
+add_executable(pm_live pm_live.cpp)
+target_link_libraries(pm_live PRIVATE hft_core zstd::libzstd OpenSSL::SSL OpenSSL::Crypto Threads::Threads)

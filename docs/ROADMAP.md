@@ -17,13 +17,13 @@ cycle counts come from Cachegrind and `rdtscp`.
 - Research code, the experiment registry, the transformer and study apps moved to `archive/`.
 - Removed from the build: tlx, toml++, SQLite, nanobind, the Python CI job.
 
-## P2. Build for the machine
+## P2. Build for the machine (done)
 
 - `native` preset: `-O3 -march=native -flto`, combined with the profile-guided presets.
 - Hot threads pinned to a P-core; E-cores left to the OS and decompression.
 - Result: before/after for `book_study` and `pm_stats` on the same store.
 
-## P3. Low-level hot paths
+## P3. Low-level hot paths (done)
 
 - Prediction-market book: flat price array over the 0.001 grid, bitmap of non-empty levels,
   integer sizes, in place of two `std::map`s.
@@ -33,7 +33,7 @@ cycle counts come from Cachegrind and `rdtscp`.
 - Log-linear latency histogram in place of HdrHistogram.
 - Result: messages per second for `pm_stats` and per-message parse cost, before and after.
 
-## P4. Live paper-trading pipeline
+## P4. Live paper-trading pipeline (done)
 
 ```
  feed thread: TLS WebSocket -> parse -> ring -> trading thread: book -> strategy -> risk
@@ -41,16 +41,22 @@ cycle counts come from Cachegrind and `rdtscp`.
  telemetry: per-stage latency histograms, counters -> metrics endpoint + dashboard
 ```
 
-- `pm_live`: subscribes to the same markets as the recorder, keeps books, runs the logit
+- `pm_live`: subscribes to complete events, keeps books, runs the logit
   Avellaneda-Stoikov maker, and fills its paper orders against the live trade stream with
   a queue-ahead count. No real orders are sent.
 - Risk: per-market and total position limits, a loss stop, a stale-feed stop.
-- Telemetry: wire-to-book and book-to-decision latency, message rates, reconnects, PnL,
-  served as plain text over HTTP on localhost and written to a status file.
+- Telemetry: ring, parse, engine and wire-to-decision latency, message rates, reconnects,
+  PnL, served over HTTP on localhost (Prometheus text, JSON, dashboard).
 - Record and replay: `pm_live --replay <dir>` runs the same code on recorded hours and must
   produce identical decisions for identical input.
 - Arbitrage scanner: for markets whose outcomes are mutually exclusive, report when the
   best asks sum below 1 or the best bids sum above 1, with size and duration.
+
+## Next
+
+- Let `pm_live --record` run for days next to the recorder, then report arbitrage windows
+  (count, duration, edge, size) and maker fills per event.
+- Bare-Linux run for hardware counters and futex wake latency without a hypervisor.
 
 ## Not planned
 

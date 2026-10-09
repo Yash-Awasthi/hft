@@ -27,6 +27,10 @@ forecaster, pre-registration) are kept out of the build under [archive/](archive
    Accounting (integer micro-dollars, PnL identity checked every event)
 
  Polymarket WS --TLS--> pm_record --> hourly zstd JSONL --> pm_stats / pm_mm
+
+ pm_live:  feed thread per connection: TLS WebSocket -> receive stamp -> SPSC byte ring
+           trading thread: tape parse -> books -> makers (paper fills) -> risk -> arb scanner
+           recording thread (replayable), HTTP thread: /metrics, /metrics.json, dashboard
 ```
 
 | Component | Where | Notes |
@@ -171,6 +175,44 @@ is a flat price array with a two-level bitmap (on 2.0M messages, `pm_stats` went
 `pm_stats` checks its rebuilt book against the exchange's own best prices (0.03% of deltas
 differ in a 20-minute sample). `pm_mm` fills quotes from recorded trades only, with a
 queue-ahead count per order, so its fills are conservative.
+
+## Live paper trading
+
+`pm_live` runs the whole pipeline on the live stream and never sends an order:
+
+```
+pm_live --record data/live --seconds 3600          # dashboard on http://127.0.0.1:8088/
+pm_live --record data/live --spin --cpu 4          # busy-poll a pinned core for latency
+pm_live --replay data/live                         # same decisions, same hash
+```
+
+It picks the most traded events in which exactly one market resolves Yes and every open
+market trades, and subscribes to every token in them. Each connection has its own thread,
+which stamps a message on receipt and copies it into a lock-free byte ring. The trading
+thread drains the rings and passes each message through the tape parser and the books. A logit
+Avellaneda-Stoikov maker runs per token, with paper fills from live trades behind a
+queue-ahead count. Portfolio risk can halt the session on a loss stop, and pauses quoting
+when gross inventory hits its cap or a connection goes silent. On a reconnect, books stay
+invalid until a fresh snapshot arrives. The arbitrage scanner tracks every window in which
+an event's Yes asks sum below 1 or its bids above 1, and does the same for each market's
+Yes/No pair.
+
+The trading core is a pure function of the (receive time, message) sequence. The recording
+holds exactly that sequence in processing order, including heartbeats and the trading
+thread's own clock records, so `--replay` reproduces the live decisions bit for bit (checked
+by a hash of the decision log). `/metrics` is Prometheus text; `/metrics.json` feeds the
+dashboard.
+
+Latency on this laptop (WSL2, one 60 s session each, per message, receive stamp to decision):
+
+| Mode | Ring queue p50 | Parse p50 | Books, strategy, risk p50 | Wire to decision p50 / p99 |
+|---|---|---|---|---|
+| default (futex doorbell) | 135 µs | 8.5 µs | 6.6 µs | 151 / 916 µs |
+| `--spin --cpu 4` | 2.2 µs | 2.4 µs | 1.0 µs | 9.8 / 210 µs |
+
+Under WSL2, waking an idle virtual CPU goes through the hypervisor, so the futex wake is
+slow; the default trades latency for an idle core. Ring queueing in spin mode comes from
+bursts: messages arrive back to back faster than they are processed.
 
 ## License
 

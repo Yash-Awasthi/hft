@@ -34,6 +34,15 @@ Working log for [docs/ROADMAP.md](docs/ROADMAP.md). The log of the research phas
   1.1 s of the remaining time on one core. HdrHistogram replaced by a 60-line log-linear
   histogram.
 
+- P4: `pm_live`, a live paper-trading pipeline: feed thread per connection into lock-free
+  byte rings, a futex doorbell, a trading thread (tape parser, flat books, makers with paper
+  fills, portfolio risk with loss stop, gross cap and stale-feed pause, reconnect
+  invalidation, arbitrage scanner over complete negRisk events and Yes/No pairs), a
+  recording thread and a loopback HTTP server with Prometheus metrics and a dashboard.
+  Replay of a recorded session gives the same decision hash as the live run (two 60 s and
+  one 90 s session checked). First sessions: 88 tokens in 5 events, no arbitrage window
+  and no paper fill in 90 s.
+
 ## In progress
 
 - Recorder running since 2026-10-09 under the logon task, 32 markets (64 tokens), hourly zstd

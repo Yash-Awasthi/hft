@@ -29,17 +29,17 @@
 #include <thread>
 #include <vector>
 
-#include "net/json.hpp"
 #include "net/tls.hpp"
+#include "pm/gamma.hpp"
 
 namespace fs = std::filesystem;
-using hft::net::Json;
+using hft::pm::kWsHost;
+using hft::pm::kWsPath;
+using hft::pm::Market;
 
 namespace {
 
-constexpr const char* kGamma = "gamma-api.polymarket.com";
-constexpr const char* kWsHost = "ws-subscriptions-clob.polymarket.com";
-constexpr const char* kWsPath = "/ws/market";
+std::string utc(std::time_t t, const char* fmt) { return hft::pm::utc_time(t, fmt); }
 
 std::atomic<bool> g_stop{false};
 void on_signal(int) { g_stop = true; }
@@ -48,14 +48,6 @@ std::int64_t now_ns() {
     timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     return static_cast<std::int64_t>(ts.tv_sec) * 1'000'000'000 + ts.tv_nsec;
-}
-
-std::string utc(std::time_t t, const char* fmt) {
-    std::tm tm;
-    gmtime_r(&t, &tm);
-    char buf[64];
-    std::strftime(buf, sizeof buf, fmt, &tm);
-    return buf;
 }
 
 // Sleeps up to `s` seconds, returning early when stop is set.
@@ -157,64 +149,6 @@ class HourlyWriter {
     std::string hour_;
     std::ofstream f_;
 };
-
-struct Market {
-    std::string tag, slug, condition, end;
-    std::vector<std::pair<std::string, std::string>> tokens;  // token id, outcome label
-};
-
-// A JSON array that the API sends as a string, e.g. "[\"Yes\", \"No\"]".
-std::vector<std::string> string_array(const Json& m, const char* key) {
-    std::vector<std::string> out;
-    const std::string s = m.str(key);
-    if (s.empty()) return out;
-    const Json a = hft::net::parse_json(s);
-    for (const Json& e : a.a)
-        if (e.type == Json::Type::Str) out.push_back(e.s);
-    return out;
-}
-
-std::string url_encode(const std::string& s) {
-    std::string out;
-    for (const unsigned char c : s) {
-        if (std::isalnum(c) || c == '-' || c == '_' || c == '.') out += static_cast<char>(c);
-        else {
-            char b[4];
-            std::snprintf(b, sizeof b, "%%%02X", c);
-            out += b;
-        }
-    }
-    return out;
-}
-
-std::vector<Market> discover(const std::vector<std::string>& tags, int per_tag, int min_days) {
-    std::vector<Market> out;
-    std::set<std::string> seen;
-    const std::string min_end = utc(std::time(nullptr) + min_days * 86400L, "%Y-%m-%dT%H:%M:%SZ");
-    for (const std::string& tag : tags) {
-        const Json t = hft::net::parse_json(hft::net::http_get(kGamma, "/tags/slug/" + url_encode(tag)));
-        std::string id = t.str("id");
-        if (id.empty()) id = std::to_string(static_cast<long long>(t.num("id")));
-        const Json ms = hft::net::parse_json(hft::net::http_get(
-            kGamma, "/markets?active=true&closed=false&order=volume24hr&ascending=false&limit=80&tag_id=" + id +
-                        "&end_date_min=" + url_encode(min_end)));
-        int taken = 0;
-        for (const Json& m : ms.a) {
-            if (taken >= per_tag) break;
-            if (!m.flag("enableOrderBook")) continue;
-            const auto ids = string_array(m, "clobTokenIds");
-            auto names = string_array(m, "outcomes");
-            const std::string cond = m.str("conditionId");
-            if (ids.empty() || !seen.insert(cond).second) continue;
-            Market mk{tag, m.str("slug"), cond, m.str("endDate"), {}};
-            for (std::size_t i = 0; i < ids.size(); ++i)
-                mk.tokens.emplace_back(ids[i], i < names.size() ? names[i] : std::to_string(i));
-            out.push_back(std::move(mk));
-            ++taken;
-        }
-    }
-    return out;
-}
 
 struct Stats {
     std::atomic<std::uint64_t> msgs{0}, bytes{0}, reconnects{0};
@@ -361,7 +295,7 @@ int main(int argc, char** argv) {
     while (!g_stop && !cap_hit) {
         std::vector<Market> markets;
         try {
-            markets = discover(tags, per_tag, min_days);
+            markets = hft::pm::discover_markets(tags, per_tag, min_days);
         } catch (const std::exception& e) {
             log.write("main", std::string("discovery failed: ") + e.what());
             if (current.empty()) {

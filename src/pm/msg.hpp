@@ -50,6 +50,8 @@ struct Event {
     std::string_view price;                // Trade: price as sent
     double size = 0;                       // Trade
     bool buy = false;                      // Trade: the aggressor bought
+    std::int64_t exch_ms = 0;              // exchange timestamp, ms since epoch, 0 if absent
+    std::int32_t conn = -1;                // control records ("_heartbeat", "_reconnect"): connection
 };
 
 class Decoder {
@@ -70,16 +72,17 @@ class Decoder {
 
    private:
     using Tape = net::JsonTape;
-    enum Field { EventType, AssetId, Price, Size, Side, BestBid, BestAsk, TickSize, Bids, Asks, PriceChanges, kFields };
+    enum Field { EventType, AssetId, Price, Size, Side, BestBid, BestAsk, TickSize, Bids, Asks, PriceChanges, Timestamp, Conn, kFields };
     using Fields = std::array<std::uint32_t, kFields>;
 
     // Keys are matched as sent; the exchange does not escape them.
     static int field(std::string_view k) {
         switch (k.size()) {
-            case 4: return k == "side" ? Side : k == "size" ? Size : k == "bids" ? Bids : k == "asks" ? Asks : -1;
+            case 4:
+                return k == "side" ? Side : k == "size" ? Size : k == "bids" ? Bids : k == "asks" ? Asks : k == "conn" ? Conn : -1;
             case 5: return k == "price" ? Price : -1;
             case 8: return k == "asset_id" ? AssetId : k == "best_bid" ? BestBid : k == "best_ask" ? BestAsk : -1;
-            case 9: return k == "tick_size" ? TickSize : -1;
+            case 9: return k == "tick_size" ? TickSize : k == "timestamp" ? Timestamp : -1;
             case 10: return k == "event_type" ? EventType : -1;
             case 13: return k == "price_changes" ? PriceChanges : -1;
             default: return -1;
@@ -114,6 +117,8 @@ class Decoder {
         Event ev;
         const Fields f = fields(e);
         ev.type = str(f, EventType);
+        if (const std::string_view ts = str(f, Timestamp); !ts.empty()) std::from_chars(ts.data(), ts.data() + ts.size(), ev.exch_ms);
+        if (!ev.type.empty() && ev.type[0] == '_' && f[Conn] != Tape::npos) ev.conn = static_cast<std::int32_t>(t_.num(f[Conn]));
         if (ev.type == "book") {
             ev.kind = Kind::Book;
             ev.asset = str(f, AssetId);
