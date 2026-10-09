@@ -36,6 +36,16 @@ class TokenBook {
         else put(asks_, px, size);
     }
 
+    // Shares displayed at `px` on one side, zero if the level is empty.
+    double size_at(bool buy, std::int32_t px) const {
+        if (buy) {
+            const auto it = bids_.find(px);
+            return it == bids_.end() ? 0.0 : it->second;
+        }
+        const auto it = asks_.find(px);
+        return it == asks_.end() ? 0.0 : it->second;
+    }
+
     bool two_sided() const { return !bids_.empty() && !asks_.empty(); }
     bool crossed() const { return two_sided() && bids_.begin()->first >= asks_.begin()->first; }
     std::int32_t best_bid() const { return bids_.empty() ? -1 : bids_.begin()->first; }
