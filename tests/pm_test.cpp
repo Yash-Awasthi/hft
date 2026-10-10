@@ -152,6 +152,8 @@ TEST(PmMaker, SnapshotCancelsQuotesAndWarmupDelaysThem) {
 
 #include <zstd.h>
 
+#include <charconv>
+#include <cstring>
 #include <fstream>
 #include <string>
 
@@ -187,13 +189,131 @@ TEST(PmDecoder, DecodesEachKindAndBatches) {
                          R"({"event_type":"last_trade_price","asset_id":"7","price":"0.4","size":"2","side":"BUY"},)"
                          R"({"event_type":"best_bid_ask"}])",
                          rec));
+    EXPECT_EQ(d.fallbacks(), 0u);  // both took the single pass
     EXPECT_FALSE(d.decode("{\"event_type\":", rec));
+    EXPECT_EQ(d.fallbacks(), 1u);
     const std::vector<std::string> want = {"book 7 1/2 tick 100 bid 3600x12.500000",
                                            "chg 7 B 3700x5.000000 0.37",
                                            "chg 8 S 6000x0.000000 ",
                                            "trade 0.4 B 2.000000",
                                            "other best_bid_ask"};
     EXPECT_EQ(seen, want);
+}
+
+namespace {
+
+// Every field of every event, so two decoders can be compared exactly.
+std::string dump(const Event& e) {
+    std::string s = std::to_string(static_cast<int>(e.kind)) + "|" + std::string(e.type) + "|" + std::string(e.asset) + "|" +
+                    std::to_string(e.tick) + "|" + std::to_string(e.has_changes) + "|" + std::to_string(e.px) + "|" +
+                    std::string(e.price) + "|" + std::to_string(e.size) + "|" + std::to_string(e.buy) + "|" +
+                    std::to_string(e.exch_ms) + "|" + std::to_string(e.conn);
+    for (const auto& l : e.bids) s += "|b" + std::to_string(l.px) + "x" + std::to_string(l.size);
+    for (const auto& l : e.asks) s += "|a" + std::to_string(l.px) + "x" + std::to_string(l.size);
+    for (const auto& c : e.changes)
+        s += "|c" + std::string(c.asset) + "," + std::to_string(c.px) + "x" + std::to_string(c.size) + "," +
+             std::to_string(c.buy) + "," + std::string(c.best_bid) + "," + std::string(c.best_ask);
+    return s;
+}
+
+rc::Gen<std::string> sp() { return rc::gen::element<std::string>("", "", " ", "\n ", "\t"); }
+
+// Mostly what the exchange sends, so the single-pass path runs; rarely an escape or a number
+// form that it leaves to the tape.
+rc::Gen<std::string> scalar() {
+    return rc::gen::weightedOneOf<std::string>(
+        {{30, rc::gen::element<std::string>(R"("0.5")", R"("0.001")", R"("12.34")", R"("7")", R"("8")", R"("BUY")",
+                                            R"("SELL")", R"("book")", R"("price_change")", R"("last_trade_price")",
+                                            R"("_heartbeat")", R"("_reconnect")", R"("1791561630336")", R"("")", "-1",
+                                            "3", "0", "12", "true", "null")},
+         {1, rc::gen::element<std::string>(R"("a\nb")", R"("x\"y")", "1.5", "1e3", "-0", "01", "+1", "1.", "false",
+                                           "1234567890123")}});
+}
+
+rc::Gen<std::string> key() {
+    return rc::gen::weightedOneOf<std::string>(
+        {{30, rc::gen::element<std::string>("event_type", "event_type", "asset_id", "price", "size", "side", "best_bid",
+                                            "best_ask", "tick_size", "bids", "asks", "price_changes", "timestamp",
+                                            "conn", "market", "hash")},
+         {1, rc::gen::element<std::string>("x", R"(price)")}});
+}
+
+rc::Gen<std::string> value(int depth);
+
+rc::Gen<std::string> object(int depth) {
+    return rc::gen::map(rc::gen::mapcat(rc::gen::inRange<std::size_t>(0, 7),
+                                        [depth](std::size_t n) {
+                                            return rc::gen::container<std::vector<std::pair<std::string, std::string>>>(
+                                                n, rc::gen::pair(key(), value(depth + 1)));
+                                        }),
+                        [](const std::vector<std::pair<std::string, std::string>>& kv) {
+                            std::string s = "{";
+                            for (std::size_t i = 0; i < kv.size(); ++i)
+                                s += (i ? ", " : "") + std::string("\"") + kv[i].first + "\":" + kv[i].second;
+                            return s + "}";
+                        });
+}
+
+rc::Gen<std::string> value(int depth) {
+    if (depth > 3) return scalar();
+    return rc::gen::weightedOneOf<std::string>(
+        {{6, scalar()},
+         {2, rc::gen::map(rc::gen::mapcat(rc::gen::inRange<std::size_t>(0, 4),
+                                          [depth](std::size_t n) {
+                                              return rc::gen::container<std::vector<std::string>>(n, object(depth));
+                                          }),
+                          [](const std::vector<std::string>& v) {
+                              std::string s = "[";
+                              for (std::size_t i = 0; i < v.size(); ++i) s += (i ? "," : "") + v[i];
+                              return s + "]";
+                          })},
+         {1, object(depth)}});
+}
+
+}  // namespace
+
+RC_GTEST_PROP(PmDecoder, SizesParseExactlyAsFromChars, ()) {
+    const auto s = *rc::gen::container<std::string>(rc::gen::element('0', '1', '5', '9', '9', '.', '+', 'e', '-'));
+    double want = 0;
+    const char* b = s.data() + (!s.empty() && s[0] == '+');
+    if (const auto r = std::from_chars(b, s.data() + s.size(), want); r.ptr == b) want = 0;
+    const double got = parse_size(s);
+    RC_ASSERT(std::memcmp(&got, &want, sizeof got) == 0);
+}
+
+// A top-level object that usually names a real event type, at any position.
+std::string event_text() {
+    std::string o = *object(0);
+    if (*rc::gen::inRange(0, 5) == 0) return o;
+    const std::string t = *rc::gen::element<std::string>("book", "price_change", "last_trade_price", "_heartbeat");
+    const std::string m = "\"event_type\":\"" + t + "\"";
+    if (o == "{}") return "{" + m + "}";
+    return *rc::gen::arbitrary<bool>() ? "{" + m + "," + o.substr(1) : o.substr(0, o.size() - 1) + "," + m + "}";
+}
+
+RC_GTEST_PROP(PmDecoder, SinglePassMatchesTheTape, ()) {
+    std::vector<std::string> objs(*rc::gen::inRange<std::size_t>(1, 4));
+    for (auto& o : objs) o = event_text();
+    std::string text = *sp();
+    if (*rc::gen::arbitrary<bool>()) {
+        text += "[";
+        for (std::size_t i = 0; i < objs.size(); ++i) text += (i ? "," : "") + *sp() + objs[i];
+        text += "]";
+    } else {
+        text += objs[0];
+    }
+    text += *sp();
+    if (*rc::gen::inRange(0, 4) == 0) {  // one corrupted byte
+        const auto at = *rc::gen::inRange<std::size_t>(0, text.size());
+        text[at] = *rc::gen::element('"', '{', '}', '[', ']', ',', ':', 'x', '\\', ' ');
+    }
+    Decoder fast, tape;
+    std::vector<std::string> a, b;
+    const bool ra = fast.decode(text, [&](const Event& e) { a.push_back(dump(e)); });
+    const bool rb = tape.decode_tape(text, [&](const Event& e) { b.push_back(dump(e)); });
+    RC_TAG(fast.fallbacks() == 0 ? "single pass" : "tape");
+    RC_ASSERT(ra == rb);
+    RC_ASSERT(a == b);
 }
 
 TEST(PmReader, ReadsConnectionsAcrossBlockBoundaries) {

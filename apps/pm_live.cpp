@@ -378,9 +378,10 @@ int replay(const Options& o) {
     std::fprintf(stderr, "files %zu messages %llu parse_errors %llu\n", st.files, (unsigned long long)st.messages,
                  (unsigned long long)st.parse_errors);
     const double ns = 1 / tsc::ticks_per_ns();
-    std::fprintf(stderr, "per message ns p50/p99/p99.9: parse %.0f/%.0f/%.0f engine %.0f/%.0f/%.0f\n",
+    std::fprintf(stderr, "per message ns p50/p99/p99.9: parse %.0f/%.0f/%.0f engine %.0f/%.0f/%.0f; tape fallbacks %llu\n",
                  parse.percentile(50) * ns, parse.percentile(99) * ns, parse.percentile(99.9) * ns,
-                 engine.percentile(50) * ns, engine.percentile(99) * ns, engine.percentile(99.9) * ns);
+                 engine.percentile(50) * ns, engine.percentile(99) * ns, engine.percentile(99.9) * ns,
+                 (unsigned long long)dec.fallbacks());
     summary(e, dh, stdout);
     return 0;
 }
