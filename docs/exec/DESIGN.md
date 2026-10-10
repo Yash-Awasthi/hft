@@ -31,10 +31,13 @@ States: PendingNew, Live, Partial, PendingCancel, Filled, Cancelled, Rejected, E
 | S13 | any | overfill, report for terminal order (not dup), unknown cl_id | unchanged | illegal++, log, kill |
 | S14 | any | duplicate fill_id | unchanged | dup++, ignore |
 
-- S18 Settlement (D16): each fill is Matched on arrival; Settled -> confirmed; SettleFailed -> fill reversed (cum and position decrease, order may return to Live/Partial if still on book, else stays terminal with reduced cum). Order state machine is unchanged; settlement is per fill, tracked in the ledger.
-- S15 Fill application is by quantity, idempotent by fill_id (small per-order ring of recent fill ids, size 8; overflow -> linear check against ledger fills for that order).
-- S16 Transition table is constexpr data; one function applies it; O(1), no alloc.
-- S17 Budget: transition <= 50 ns p99 (bench).
+- S18 Settlement (D16): each fill is Matched on arrival; Settled -> confirmed; SettleFailed -> the ledger reverses the fill (opposite fill, fee refunded). The order's cum and state are not changed: the venue considers the order filled. Counted (settle_failures).
+- S15 Fill application is by quantity, idempotent by fill_id. Every fill id of an order is kept (list in a shared index-addressed pool, freed with the order). An 8-entry ring was tried first; the property test showed a duplicate of an older fill slipping through (order filled in > 8 pieces).
+- S16 Transitions are one switch in Oms::on_report; the expected table (9 states x 10 events, incl. three Status replies) lives in tests/oms_test.cpp and is checked exhaustively.
+- S19 Reconcile: VenueReq::Status asks the venue to resend every fill of the order (duplicates dropped by S15), then a Status report with its state (Live, Cancelled, NotFound) and cumulative fill; a cumulative fill that differs from ours trips R14 (Mismatch).
+- S20 Finished orders stay keep_done (60 s) so late duplicates are recognised; then freed and the slot reused.
+- S21 Reservations: buy reserves notional at the limit plus the worst-case taker fee in the ledger; each fill releases its share (notional at the limit, fee in proportion); the rest is released when the order finishes. Sell reserves the shares. Risk's Exposure (open buy notional, own best prices, counts) is updated on open, each fill and close.
+- S17 Budget: transition <= 50 ns. Measured: full cycle (submit incl. risk, ack, fill, cancel, cancel ack) 57 ns = ~11 ns per operation (native, batch mean).
 
 ## R Risk (src/exec/risk.hpp)
 

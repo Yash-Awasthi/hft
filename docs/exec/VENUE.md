@@ -59,6 +59,8 @@ Status per fact: V = verified from docs; M = measured here; U = uncertain or con
   At RF2's threshold (edge >= 0.02, lasting >= 1 s): 17 windows, ~10 USD gross total at displayed size, before fees and latency.
   -> depth, not capital, bounds results (D3 caps never bind); E6 should report this honestly; more recording days raise counts, not per-window size.
 
+- F32 M Feed trade side vs side implied by price against our rebuilt book just before the trade (/tmp/sidecheck.cpp; >= best ask: taker bought, <= best bid: sold): pm-snap 47,710 trades, decidable 46,639, agreement 99.1% (disagree 427), feed BUY share 96.0%, 1.3% print strictly inside the spread; pm-live 20261009T160027Z 3,031 trades, agreement 93.2%, BUY share 73.2%, 21% inside the spread (trade message likely ahead of its book update). RF27's 59% is feed vs on-chain aggressor (mint/merge matching changes who is the aggressor), a different question. D21 stands: paper fills by price vs our quote; side is not used.
+
 ## Consequences for the design (applied in DECISIONS D16-D20)
 
 - Settlement can fail after a match (F15) -> ledger separates matched from confirmed; a settlement-failure fault is core.

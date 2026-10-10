@@ -27,13 +27,13 @@ Step template: do -> check. "Ask" = stop and ask the owner before continuing.
 
 ## E2 OMS
 
-- [ ] E2.1 Table test: every (state, event) pair -> expected state or S13.
-- [ ] E2.2 Reference model (naive, std::map) for property test.
-- [ ] E2.3 src/exec/oms.hpp: Pool order table, cl_id (T6), S1..S16, timeouts, Status/reconcile hook.
-- [ ] E2.4 Property test 100k cases: random interleavings incl. dup/reorder/timeout vs reference: cum fill monotone, <= qty; open qty, reservations, positions equal reference.
+- [x] E2.1 (90f6ccf) Table test: every (state, event) pair -> expected state or S13.
+- [x] E2.2 (90f6ccf) Reference model (naive, std::map) for property test.
+- [x] E2.3 (90f6ccf) src/exec/oms.hpp: Pool order table, cl_id (T6), S1..S16, timeouts, Status/reconcile hook.
+- [x] E2.4 (90f6ccf; 3 seeds x 100k) Property test 100k cases: random interleavings incl. dup/reorder/timeout vs reference: cum fill monotone, <= qty; open qty, reservations, positions equal reference.
 - [ ] E2.5 fuzz/oms_fuzz.cpp; 10 min clean.
-- [ ] E2.6 alloc_test extended: steady-state submit/ack/fill/cancel zero allocations.
-- [ ] E2.7 Bench S17.
+- [x] E2.6 (b91f5d9) alloc_test extended: steady-state submit/ack/fill/cancel zero allocations.
+- [x] E2.7 (b91f5d9) Bench S17: 57 ns per 5-operation cycle.
 - G2: all above; mutation check (plant: overfill accepted; dup fill counted twice; reject not releasing reservation) all caught.
 
 ## E3 SimVenue
