@@ -5,11 +5,11 @@ Terse reference docs; ids are stable, cite them in commits and code comments whe
 
 ## Status
 
-- Current: E0.2-E0.5 done (docs: VENUE.md, REFS.md, D5/D8/D16-D20). Next step: `E0.1` (branch + reference copies), then G0 check, then E1.
-- Branch: `exec-layer`, created from `phase1-hotpath` at E0 start.
+- Current: E0 done, G0 met (2026-10-10). Next step: `E1.0`.
+- Branch: `exec-layer` (from `phase1-hotpath`).
 - Baseline hashes (must stay equal unless a step says otherwise):
   - `pm_live --replay ~/data/pm-live/20261009T160027Z` -> `decision_hash 6facf575ad8d84bc`
-  - `pm_stats ~/data/pm` output -> keep a copy at E0 as `~/data/ref/pm_stats.tsv`
+  - `pm_stats ~/data/ref/pm-snap` (frozen copy, 44 files) -> `~/data/ref/pm_stats.tsv`, sha256 `dafd558b45dc3a1a...`
 
 ## Files
 
@@ -22,6 +22,7 @@ Terse reference docs; ids are stable, cite them in commits and code comments whe
 | SECURITY.md | trust boundaries, rules, grep gates | SEC* |
 | VENUE.md | exchange facts with sources, measured RTT and feed facts | F* |
 | REFS.md | references mapped to components | RF* |
+| HW.md | machine facts, measurement conditions | H* |
 
 ## Conventions
 

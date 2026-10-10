@@ -27,11 +27,14 @@ Format: id, decision, why. Change a decision only by adding a new id that supers
 - D18 Fees: taker only, fee = C * rate * p * (1 - p), rate by market category (F17/F18), rounded to 5 dp; makers pay nothing; rebates not modelled. Session file gains each market's category (from Gamma tags). Formula variant with exponent (F19) is a config switch, off by default.
 - D19 Batch limit 15 orders (F11): event-level arb with n legs sends ceil(n/15) batches back to back; policy P skew measured.
 - D20 Exchange timestamps are never used for latency or ordering (F29); only local receive time.
+- D21 Paper fills are decided by trade price against our quote, never by the feed's trade side: public-feed trade direction matches on-chain truth in only ~59% of cases (RF27). A trade at p can fill our bid only if p <= bid and our ask only if p >= ask; bid < ask, so price alone decides. E3 measures feed side vs price-implied side agreement on our recordings. Why: RF27.
+- D22 Timeline: about 5 months from 2026-10-10 (owner, no hard deadline) -> target 2027-03-10. Optional items (V8, V12, V13) only after G5.
+- D23 Recorders run continuously from pinned binaries in ~/data/bin (PM_RECORD_BIN, PM_LIVE_BIN); autostart at logon stays off (owner). Caps 50 GB + 20 GB kept (owner). Replace a pinned binary with `install` (new inode), never `cp` over it.
 
 ## Open (owner)
 
-- Q1 D3 mapping OK? (capital 1M, 0.1% per attempt, 2% daily). Default: proceed with D3.
-- Q2 Deadline for the project? Decides whether E6 demos and E7 fit fully. Default: plan as written, cut optional items first.
+- Q1 resolved 2026-10-10: D3 accepted.
+- Q2 resolved 2026-10-10: D22.
 
 ## Resolved in E0 (2026-10-10, details in VENUE.md)
 
@@ -47,4 +50,4 @@ Format: id, decision, why. Change a decision only by adding a new id that supers
 
 ## Open (owner)
 
-- Q4b Which "Anatomy of Polymarket" paper was meant (REFS: RF4 Tsang & Yang, or Dubach)?
+- Q4b resolved 2026-10-10: both (RF4, RF27).

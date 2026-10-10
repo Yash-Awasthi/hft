@@ -5,13 +5,15 @@ Step template: do -> check. "Ask" = stop and ask the owner before continuing.
 
 ## E0 Facts and inspection (no product code)
 
-- [ ] E0.1 Create branch `exec-layer` from `phase1-hotpath`. Save `pm_stats ~/data/pm` to `~/data/ref/pm_stats.tsv`; confirm baseline hash (INDEX).
+- [x] E0.1 (5f7aa4a; ~/data/ref/pm-snap frozen, 44 files, pm_stats sha256 dafd558b45dc3a1a; replay hash re-checked) Create branch `exec-layer` from `phase1-hotpath`. Save `pm_stats ~/data/pm` to `~/data/ref/pm_stats.tsv`; confirm baseline hash (INDEX).
 - [x] E0.2 (2026-10-10, docs only) Read in full: engine/scheduler.hpp, backtest/risk.hpp, backtest/accounting.hpp, engine/matching.hpp, pm/maker.hpp, pm/engine.hpp, pm/arb.hpp, core/pool.hpp, book/id_map.hpp. Confirm or amend D8 (reuse map).
 - [x] E0.3 (2026-10-10) Answer Q3..Q10 from the exchange's current public API docs; write `docs/exec/VENUE.md` (fact, source URL, date read). Fix D5 units.
 - [x] E0.4 (2026-10-10) Measure RTT to the exchange API host: 20 TCP connects, median/p90 (Q11). Record in VENUE.md.
 - [x] E0.5 (2026-10-10) Check recorded data for: tick_size_change events, market close/resolution events, min order size hints. Record counts in VENUE.md.
+- [x] E0.6 (cf8b358) Data integrity: recorders ignore SIGHUP, pm_record exits 128+signal (was 0, so its supervisor restarted it), torn last lines dropped on compression (12 torn lines in 3.9M found in pm-snap, one with 4083 NUL bytes from an unclean WSL stop); CMake module scanning off (ninja 1.13 assertion).
+- [x] E0.7 Hardware verified: HW.md.
 - Ask if any fact contradicts DESIGN (e.g. fills not attributable to orders, no complete-set payout).
-- G0: VENUE.md complete with dates; D5 and D8 final; DECISIONS updated.
+- G0: VENUE.md complete with dates; D5 and D8 final; DECISIONS updated. MET 2026-10-10.
 
 ## E1 Types, ledger, risk
 
@@ -40,6 +42,7 @@ Step template: do -> check. "Ask" = stop and ask the owner before continuing.
 - [ ] E3.2 Invariants V15..V17 as always-on checks in tests and debug builds.
 - [ ] E3.3 Faults (D14, D16): core V18, V9, V10, V11, V14 with Philox, each forced on in a test; V8, V12, V13 optional.
 - [ ] E3.3b Venue rules from VENUE.md: F6 rounding, F8 min size, F10 sports delay, F12 modes, D18 fees, D19 batches, L6 merge/split; one test each.
+- [ ] E3.0 Measure on pm-snap: share of last_trade_price where feed side disagrees with the side implied by price vs the book just before (D21, RF27). Record in VENUE.md.
 - [ ] E3.4 Parity G3b prep: run maker on reference recording, old path, dump fills (ns, token, px, qty) to file.
 - [ ] E3.5 Maker quotes become intents (A2.7); fills via SimVenue with latency 0, faults off; compare dump: must be identical.
 - Ask if parity is not exact after one day of investigation (stop condition).
