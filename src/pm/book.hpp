@@ -62,6 +62,10 @@ class TokenBook {
 
     std::size_t levels() const { return bids_.count + asks_.count; }
 
+    // Walking the book outward: the next non-empty ask at or above px, bid at or below px; -1 if none.
+    std::int32_t ask_at_or_above(std::int32_t px) const { return px > kMaxPx ? -1 : asks_.at_or_above(px < 0 ? 0 : px); }
+    std::int32_t bid_at_or_below(std::int32_t px) const { return px < 0 ? -1 : bids_.at_or_below(px > kMaxPx ? kMaxPx : px); }
+
    private:
     struct Side {
         static constexpr int kWords = (kMaxPx + 64) / 64;

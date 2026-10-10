@@ -103,6 +103,20 @@ Invariants (checked every event; abort in tests):
 
 Limits (print in every report): L2 has no order ids (queue estimated); others do not react to us; latency modelled.
 
+## V-impl SimVenue mechanics (E3)
+
+- V20 Books: the venue reads the same per-token books the strategies see, through a callable book(t) (as ArbScanner does); no second copy.
+- V21 Scheduling: one engine::EventQueue. Request arrival at t_send + L_in is OrderArrival; report delivery at t_venue + L_out is Report. At equal times Market < OrderArrival < Report (D7), so an order arriving in the same nanosecond as a market event sees the book after it.
+- V22 Resting orders per token in a small index-addressed list: {cl_id, venue_id, side, px, rem, ahead, cum, fills}. Venue keeps its own record of every fill per order (for Status resends, S19).
+- V23 New: rule checks (V6) -> Reject; post-only that would match -> Reject; marketable part with a token delay (rules.delay_ms) -> Ack(Delayed), match at +delay against the book then; else match at once: walk opposite levels best first while price within limit; per level take min(remaining, displayed - overlay); fill at the level price; FOK checks the total first (all or Expired); FAK fills then Expired for the rest; GTC/GTD rests the remainder with ahead = displayed size at its price (0 if it improves the best). Ack status: Live, Matched or Delayed.
+- V24 Overlay: per token, per (side, price) quantity we took; cleared for a level when a price_change for that level arrives, for the token on a snapshot.
+- V25 Maker fills on a trade at p, size s (production, D21): our resting buys at px >= p and sells at px <= p are candidates; px strictly better than p (trade through) fills all remaining; px == p consumes ahead first, then fills. Compat mode (D25): only the side the feed names (taker buy -> our sells) is candidate, as pm/maker.hpp. Maker fill price = our limit. Fee 0 (makers pay nothing, F17).
+- V26 Level update at (side, px): ahead = min(ahead, new displayed size) for our orders there (cancels ahead not credited: V3).
+- V27 Cancel arrival: resting -> CancelAck; already filled or unknown -> CancelReject. Status arrival: resend every recorded fill of the order, then Status(state, cum); order never seen (dropped New) -> Status NotFound.
+- V28 Settlement: each fill gets Settled after settle_delay (config, default 2 s) or SettleFailed with probability p_settle_fail (V18).
+- V29 Faults act on reports only (the venue's matching is unaffected): drop (V9 acks, V10 fills), duplicate (V11), hold during a disconnect window (V14) then deliver in order. Each decision is one Philox draw addressed by (seed, report index, purpose).
+- V30 Merge/split (D17) are not venue orders: ledger operations after a configurable latency, owned by the engine.
+
 ## X Arb executor (src/exec/arb_exec.hpp)
 
 - X1 Trigger: scanner window. Pair groups: buy and sell side (D17). Event groups: buy side only (D10).

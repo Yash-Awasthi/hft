@@ -5,7 +5,7 @@ Terse reference docs; ids are stable, cite them in commits and code comments whe
 
 ## Status
 
-- Current: E0, E1 done (G0, G1 met 2026-10-10). Next step: `E2.1`.
+- Current: E0-E2 done (G0-G2 met 2026-10-10). Next step: `E3.1` (V-impl in DESIGN).
 - Branch: `exec-layer` (from `phase1-hotpath`).
 - Baseline hashes (must stay equal unless a step says otherwise):
   - `pm_live --replay ~/data/pm-live/20261009T160027Z` -> `decision_hash 6facf575ad8d84bc`

@@ -31,10 +31,10 @@ Step template: do -> check. "Ask" = stop and ask the owner before continuing.
 - [x] E2.2 (90f6ccf) Reference model (naive, std::map) for property test.
 - [x] E2.3 (90f6ccf) src/exec/oms.hpp: Pool order table, cl_id (T6), S1..S16, timeouts, Status/reconcile hook.
 - [x] E2.4 (90f6ccf; 3 seeds x 100k) Property test 100k cases: random interleavings incl. dup/reorder/timeout vs reference: cum fill monotone, <= qty; open qty, reservations, positions equal reference.
-- [ ] E2.5 fuzz/oms_fuzz.cpp; 10 min clean.
+- [x] E2.5 (b91f5d9) fuzz/oms_fuzz.cpp; 10 min clean (2.9M runs, ASan+UBSan, RSS flat 486 MB).
 - [x] E2.6 (b91f5d9) alloc_test extended: steady-state submit/ack/fill/cancel zero allocations.
 - [x] E2.7 (b91f5d9) Bench S17: 57 ns per 5-operation cycle.
-- G2: all above; mutation check (plant: overfill accepted; dup fill counted twice; reject not releasing reservation) all caught.
+- G2: all above; mutation check (plant: overfill accepted; dup fill counted twice; reject not releasing reservation) all caught. MET 2026-10-10 (4/4 OMS mutations caught).
 
 ## E3 SimVenue
 
