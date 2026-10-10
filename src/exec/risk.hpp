@@ -31,6 +31,7 @@ struct RiskLimits {
     std::int64_t cancel_burst = 4000, cancel_rate_per_s = 400;
     std::uint32_t reject_spike = 20;     // more venue rejects than this within the window: kill
     Ns reject_window = 10'000'000'000;
+    bool allow_short = false;  // only for comparing with models that assume shorting (D25)
 };
 
 // Book state the checks need for one token.
@@ -190,7 +191,7 @@ class Risk {
         if (o.side == Side::Buy ? x.own_ask(t) >= 0 && o.px >= x.own_ask(t) : x.own_bid(t) >= 0 && o.px <= x.own_bid(t))
             return Reject::SelfCross;
         if (o.side == Side::Sell) {
-            if (o.qty > lg.available_pos(t)) return Reject::Position;
+            if (!l_.allow_short && o.qty > lg.available_pos(t)) return Reject::Position;
         } else {
             const Usd add = notional(o.px, o.qty);
             if (lg.cost(t) + x.buy_usd(t) + add > l_.token_cap) return Reject::Position;

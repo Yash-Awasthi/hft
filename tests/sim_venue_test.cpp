@@ -216,6 +216,20 @@ TEST(SimVenue, LatencyAndOrderedDelivery) {
     for (std::size_t i = 1; i < g.got.size(); ++i) EXPECT_GE(g.got[i].venue_ns, g.got[i - 1].venue_ns);
 }
 
+TEST(SimVenue, RequestsArriveInTheOrderTheyWereSent) {
+    SimConfig c;
+    c.lat_in = 50 * kMs, c.jitter = 40 * kMs;
+    for (std::uint64_t seed = 1; seed <= 20; ++seed) {
+        c.seed = seed;
+        Rig g(c);
+        const auto cl = g.send(Side::Buy, 3900, 10, Tif::Gtc, 0);
+        g.ask(VenueReq::Cancel, cl, 1);  // sent 1 ns later: must not overtake the order
+        g.run(1000 * kMs);
+        ASSERT_EQ(g.of(cl, VenueRpt::CancelAck).size(), 1u) << seed;
+        ASSERT_TRUE(g.of(cl, VenueRpt::CancelReject).empty()) << seed;
+    }
+}
+
 TEST(SimVenue, SettlementArrivesLaterAndDoesNotHoldOtherReports) {
     SimConfig c;
     c.settle_delay = 2000 * kMs;

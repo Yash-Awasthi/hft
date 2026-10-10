@@ -16,6 +16,8 @@
 #include <string_view>
 #include <vector>
 
+#include "exec/oms.hpp"
+#include "exec/sim_venue.hpp"
 #include "pm/arb.hpp"
 #include "pm/maker.hpp"
 #include "pm/msg.hpp"
@@ -29,6 +31,12 @@ struct EngineParams {
     double loss_stop_usd = 100;   // total PnL below -loss_stop halts quoting for the session
     double stale_s = 20;          // a connection silent this long pauses its tokens' quotes
     double tick_s = 0.1;          // risk checks run when receive time crosses this grid
+    // Venue mode: makers quote through risk, the order manager and the simulated venue, which
+    // decides fills; off: each maker fills itself (its own model, as before).
+    bool venue = false;
+    exec::SimConfig sim;
+    exec::RiskLimits risk;
+    bool long_only = true;
 };
 
 struct Decision {
@@ -43,7 +51,12 @@ class Engine {
    public:
     static constexpr std::uint32_t kAll = ~0u;
 
-    explicit Engine(const EngineParams& p) : p_(p) {}
+    explicit Engine(const EngineParams& p)
+        : p_(p),
+          ledger_(1'000'000 * exec::kDollar, p.long_only),
+          risk_(p.risk),
+          oms_(1, risk_, exp_, ledger_),
+          sim_(p.sim, BookOf{this}) {}
 
     // Token index for an id, created on first sight.
     std::uint32_t token(std::string_view id) {
@@ -51,8 +64,24 @@ class Engine {
         if (i == toks_.size()) {
             toks_.push_back(std::make_unique<Tok>(p_.maker));
             toks_.back()->maker.set_enabled(p_.quote);
+            toks_.back()->maker.fill_log = fill_log_;
+            toks_.back()->maker.token_index = i;
+            toks_.back()->maker.set_venue_fills(p_.venue);
+            if (p_.venue) {
+                const std::uint32_t n = i + 1;
+                ledger_.ensure(n), exp_.ensure(n, 1), risk_.ensure(n), oms_.ensure(n), sim_.ensure(n);
+                ledger_.set_group(i, 0), exp_.set_group(i, 0), risk_.set_group(i, 0);
+                rules_.resize(n);
+                sim_.set_rules(i, rules_[i]);
+            }
         }
         return i;
+    }
+    // A market's order rules (session file), for the venue and risk checks.
+    void set_rules(std::uint32_t t, const MarketRules& r) {
+        if (!p_.venue) return;
+        rules_[t] = r;
+        sim_.set_rules(t, r);
     }
     void set_conn(std::uint32_t t, std::uint32_t conn) {
         toks_[t]->conn = conn;
@@ -76,7 +105,9 @@ class Engine {
                 for (const auto& l : e.asks) t.maker.book.set(false, l.px, l.size);
                 if (e.tick > 0) t.maker.tick = e.tick;
                 t.seeded = true;
+                if (p_.venue) sim_.on_snapshot(i);
                 t.maker.on_snapshot(ns);
+                sync(i, ns);
                 after(ns, i);
                 break;
             }
@@ -86,10 +117,12 @@ class Engine {
                     const std::uint32_t i = token(c.asset);
                     if (!toks_[i]->seeded) continue;
                     toks_[i]->maker.book.set(c.buy, c.px, c.size);
+                    if (p_.venue) sim_.on_level(i, c.buy, c.px);
                     if (std::find(touched_.begin(), touched_.end(), i) == touched_.end()) touched_.push_back(i);
                 }
                 for (const std::uint32_t i : touched_) {
                     toks_[i]->maker.on_level(ns);
+                    sync(i, ns);
                     after(ns, i);
                 }
                 break;
@@ -98,7 +131,11 @@ class Engine {
                 Tok& t = *toks_[i];
                 if (!t.seeded) break;
                 const double inv = t.maker.inventory();
+                in_trade_ = true;  // fills delivered now are logged below, as the makers' own model logs them
+                if (p_.venue) sim_.on_trade(i, e.px, e.size, e.buy, ns), pump(ns);
                 t.maker.on_trade(ns, e.buy, e.px, e.size);
+                sync(i, ns);
+                in_trade_ = false;
                 ++trades_;
                 if (t.maker.inventory() != inv) {
                     ++fills_;
@@ -124,6 +161,26 @@ class Engine {
     // Portfolio risk at receive time `ns`: loss stop, gross inventory, stale connections.
     void tick(std::int64_t ns) {
         next_tick_ = ns + static_cast<std::int64_t>(p_.tick_s * 1e9);
+        if (p_.venue) {  // order timeouts, freeing finished orders, position reconciliation (R14)
+            auto sink = [&](const exec::VenueReq& r) { sim_.request(r, ns); };
+            oms_.on_timer(ns, sink);
+            pump(ns);
+            // Fills in flight (latency, settlement, a held connection) make positions differ for
+            // a while; only a difference that outlasts all of them is a missing fill.
+            const std::int64_t grace = p_.sim.settle_delay + 2 * (p_.sim.lat_in + p_.sim.lat_out + p_.sim.jitter) +
+                                       p_.sim.disc_for + 1'000'000'000;
+            for (std::uint32_t t = 0; t < toks_.size(); ++t) {
+                std::int64_t& since = toks_[t]->mismatch_since;
+                if (sim_.position(t) == ledger_.pos(t)) since = 0;
+                else if (!since) since = ns;
+                else if (since > 0 && ns - since > grace) ++mismatches_, since = -1, risk_.kill(exec::KillReason::Mismatch, ns);
+            }
+            if (risk_.killed() && !cancelled_all_) {
+                cancelled_all_ = true;
+                oms_.cancel_all(ns, sink);
+                pump(ns);
+            }
+        }
         if (!p_.quote) return;
         double pnl = 0, gross = 0;
         for (const auto& t : toks_) pnl += t->maker.pnl(), gross += std::abs(t->maker.inventory());
@@ -141,6 +198,7 @@ class Engine {
             const bool on = !halted_ && gross_ok && !stale;
             if (on != t.maker.enabled()) {
                 t.maker.set_enabled(on);
+                sync(i, ns);
                 log_.push_back({on ? Decision::Resume : Decision::Pause, ns, i, 0, 0, t.maker.inventory()});
                 after(ns, i);
             }
@@ -154,6 +212,18 @@ class Engine {
     void finish(std::int64_t ns) {
         arb_.finish(ns, [&](const ArbWindow& w) { closed_.push_back(w); });
     }
+
+    // Every maker fill goes to `log` (tokens created later too).
+    void set_fill_log(std::vector<MakerFill>* log) {
+        fill_log_ = log;
+        for (auto& t : toks_) t->maker.fill_log = log;
+    }
+
+    const exec::Ledger& ledger() const { return ledger_; }
+    const exec::Oms& oms() const { return oms_; }
+    const exec::SimStats& venue_stats() const { return sim_.stats(); }
+    const exec::Risk& exec_risk() const { return risk_; }
+    std::uint64_t position_mismatches() const { return mismatches_; }
 
     // Read-only views for reports and metrics.
     std::size_t tokens() const { return toks_.size(); }
@@ -171,9 +241,14 @@ class Engine {
     bool halted() const { return halted_; }
 
    private:
+    struct Live {
+        std::uint64_t cl = 0, seq = 0;  // our order on this side, and the maker placement it is
+    };
     struct Tok {
         explicit Tok(const MakerParams& p) : maker(p) {}
         TokenMaker maker;
+        Live live[2];  // [0] bid, [1] ask
+        std::int64_t mismatch_since = 0;  // venue and ledger positions differ since; -1 once reported
         std::uint32_t conn = ~0u;
         bool seeded = false;
         std::int32_t bid = -1, ask = -1;  // last logged quotes
@@ -182,6 +257,50 @@ class Engine {
         std::int64_t last_ns = 0;
         bool stale = false;
     };
+
+    struct BookOf {
+        Engine* e;
+        const TokenBook& operator()(std::uint32_t t) const { return e->toks_[t]->maker.book; }
+    };
+
+    // Venue mode: brings our orders in line with the maker's quotes. A side whose quote went
+    // away or was placed again is cancelled first (both sides, so a new bid never meets our old
+    // ask), then new orders go in; the venue answers at once at zero latency.
+    void sync(std::uint32_t i, std::int64_t ns) {
+        if (!p_.venue) return;
+        Tok& t = *toks_[i];
+        const std::int32_t px[2] = {t.maker.bid_px(), t.maker.ask_px()};
+        const std::uint64_t seq[2] = {t.maker.bid_seq(), t.maker.ask_seq()};
+        auto sink = [&](const exec::VenueReq& r) { sim_.request(r, ns); };
+        bool cancelled = false;
+        for (int s = 0; s < 2; ++s)
+            if (t.live[s].cl && (px[s] < 0 || seq[s] != t.live[s].seq)) cancelled |= oms_.cancel(t.live[s].cl, ns, sink), t.live[s].cl = 0;
+        if (cancelled) pump(ns);
+        for (int s = 0; s < 2; ++s) {
+            if (px[s] < 0 || seq[s] == t.live[s].seq) continue;
+            t.live[s].seq = seq[s];
+            const exec::OrderIntent in{i, s ? exec::Side::Sell : exec::Side::Buy, exec::Tif::Gtc, true, 0, px[s],
+                                       static_cast<exec::Qty>(t.maker.size() * 1e6 + 0.5), 0};
+            const exec::MarketView mv{t.maker.book.best_bid(), t.maker.book.best_ask(), t.seeded, !t.seeded, &rules_[i]};
+            t.live[s].cl = oms_.submit(in, mv, ns, sink);
+        }
+        pump(ns);
+    }
+    // Delivers everything the venue has due at `ns` to the order manager; fills reach the maker.
+    void pump(std::int64_t ns) {
+        sim_.run(ns, true, [&](const exec::VenueRpt& r) {
+            oms_.on_report(r, ns, [&](const exec::Order& o, exec::OrdEvent ev, exec::Qty q, exec::Px p) {
+                Tok& t = *toks_[o.in.token];
+                const int s = o.in.side == exec::Side::Buy ? 0 : 1;
+                const bool current = t.live[s].cl == o.cl_id;
+                if (ev == exec::OrdEvent::Fill) {
+                    t.maker.on_fill(ns, s == 0, p, static_cast<double>(q) * 1e-6, current);
+                    if (!in_trade_) ++fills_, log_.push_back({Decision::Fill, ns, o.in.token, p, 0, t.maker.inventory()});
+                }
+                if (current && exec::terminal(o.state)) t.live[s].cl = 0;
+            });
+        });
+    }
 
     // Logs a quote change and re-checks the token's arbitrage groups.
     void after(std::int64_t ns, std::uint32_t i) {
@@ -196,6 +315,15 @@ class Engine {
     }
 
     EngineParams p_;
+    exec::Ledger ledger_;
+    exec::Exposure exp_;
+    exec::Risk risk_;
+    exec::Oms oms_;
+    exec::SimVenue<BookOf> sim_;
+    std::vector<MarketRules> rules_;
+    std::uint64_t mismatches_ = 0;
+    bool cancelled_all_ = false, in_trade_ = false;
+    std::vector<MakerFill>* fill_log_ = nullptr;
     TokenIndex ids_;
     std::vector<std::unique_ptr<Tok>> toks_;
     std::vector<Conn> conns_;

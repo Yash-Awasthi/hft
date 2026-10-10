@@ -11,6 +11,7 @@
 // - any report the machine cannot explain is counted and trips the kill switch.
 
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 #include "book/id_map.hpp"
@@ -112,13 +113,14 @@ class Oms {
     void on_report(const VenueRpt& r, Ns now, Listener&& on) {
         if (r.kind == VenueRpt::Settled || r.kind == VenueRpt::SettleFailed) {
             const bool ok = r.kind == VenueRpt::Settled ? ledger_.settled(r.fill_id) : ledger_.failed(r.fill_id);
-            if (!ok) illegal(now);
+            if (!ok) return void(++orphan_settlements_);  // duplicate, or a fill report we never got
             if (r.kind == VenueRpt::SettleFailed) ++settle_failed_;
             return;
         }
         Order* o = find(r.cl_id);
-        if (!o) return illegal(now);
+        if (!o) return illegal(now, r.kind, 255);
         const OrdState s = o->state;
+        last_kind_ = r.kind, last_state_ = static_cast<std::uint8_t>(s), last_reason_ = r.reason;
         switch (r.kind) {
             case VenueRpt::Ack:
                 if (s == OrdState::Rejected) return illegal(now);
@@ -127,7 +129,10 @@ class Oms {
                 else if (s == OrdState::Unknown) resolve(*o, o->cum ? OrdState::Partial : OrdState::Live, on);
                 return;
             case VenueRpt::Reject:
-                if (s != OrdState::PendingNew && s != OrdState::Unknown) return illegal(now);
+                if (s == OrdState::Rejected) return void(++duplicates_);
+                // A cancel can go out before the ack; the order may then still be rejected.
+                if (s != OrdState::PendingNew && s != OrdState::Unknown && !(s == OrdState::PendingCancel && !o->venue_id))
+                    return illegal(now);
                 if (s == OrdState::Unknown) unfreeze(*o);
                 finish(*o, OrdState::Rejected, now);
                 on(*o, OrdEvent::Rejected, 0, 0);
@@ -150,6 +155,9 @@ class Oms {
             }
             case VenueRpt::CancelAck:
             case VenueRpt::Expired:
+                // The same final report again (at-least-once delivery) changes nothing.
+                if ((r.kind == VenueRpt::CancelAck && s == OrdState::Cancelled) || (r.kind == VenueRpt::Expired && s == OrdState::Expired))
+                    return void(++duplicates_);
                 if (terminal(s)) return illegal(now);
                 if (s == OrdState::Unknown) unfreeze(*o);
                 finish(*o, r.kind == VenueRpt::CancelAck ? OrdState::Cancelled : OrdState::Expired, now);
@@ -206,6 +214,10 @@ class Oms {
     std::uint64_t timeouts() const { return timeouts_; }
     std::uint64_t mismatches() const { return mismatches_; }
     std::uint64_t settle_failures() const { return settle_failed_; }
+    std::uint64_t orphan_settlements() const { return orphan_settlements_; }
+    // The first illegal report: its kind and the order state it met (255: unknown order).
+    std::pair<std::uint8_t, std::uint8_t> first_illegal() const { return first_illegal_; }
+    std::uint16_t first_illegal_reason() const { return first_reason_; }
 
    private:
     Order* find(std::uint64_t cl) {
@@ -278,8 +290,9 @@ class Oms {
         on(o, OrdEvent::Resolved, 0, 0);
     }
     void unfreeze(Order& o) { --unknown_[o.in.token]; }
-    void illegal(Ns now) {
-        ++illegal_;
+    void illegal(Ns now) { illegal(now, last_kind_, last_state_); }
+    void illegal(Ns now, std::uint8_t kind, std::uint8_t state) {
+        if (!illegal_++) first_illegal_ = {kind, state}, first_reason_ = last_reason_;
         risk_.kill(KillReason::Internal, now);
     }
 
@@ -298,7 +311,10 @@ class Oms {
     std::uint32_t used_fill_ = 0, free_fill_ = book::kNoOrder;
     std::vector<std::uint32_t> unknown_;  // Unknown orders per token
     std::uint32_t used_ = 0, free_ = book::kNoOrder, open_ = 0;
-    std::uint64_t illegal_ = 0, duplicates_ = 0, timeouts_ = 0, mismatches_ = 0, settle_failed_ = 0;
+    std::pair<std::uint8_t, std::uint8_t> first_illegal_{0, 0};
+    std::uint8_t last_kind_ = 0, last_state_ = 0;
+    std::uint16_t last_reason_ = 0, first_reason_ = 0;
+    std::uint64_t illegal_ = 0, duplicates_ = 0, timeouts_ = 0, mismatches_ = 0, settle_failed_ = 0, orphan_settlements_ = 0;
 };
 
 }  // namespace hft::exec

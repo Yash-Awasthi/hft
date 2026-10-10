@@ -87,7 +87,11 @@ struct Session {
         return s;
     }
     void apply(Engine& e) const {
-        for (const Tok& t : tokens) e.set_conn(e.token(t.id), static_cast<std::uint32_t>(t.conn));
+        for (const Tok& t : tokens) {
+            const std::uint32_t i = e.token(t.id);
+            e.set_conn(i, static_cast<std::uint32_t>(t.conn));
+            e.set_rules(i, t.rules);
+        }
         for (const Group& g : groups) e.add_group(g.name, g.ids);
     }
 };

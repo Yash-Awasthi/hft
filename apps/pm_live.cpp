@@ -78,7 +78,7 @@ struct Options {
     int events = 40, max_tokens = 200, tokens_per_conn = 50, port = 8088, cpu = -1;
     bool spin = false;  // busy-poll the rings instead of sleeping on the doorbell
     double seconds = 0, record_cap_gb = 20;
-    fs::path record, replay;
+    fs::path record, replay, dump_fills;  // dump_fills: replay writes every maker fill there
 };
 
 Session discover(const Options& o) {
@@ -441,6 +441,8 @@ int replay(const Options& o) {
     DecisionHash dh;
     Decoder dec;
     Histogram parse, engine;
+    std::vector<MakerFill> fills;
+    if (!o.dump_fills.empty()) e.set_fill_log(&fills);
     const auto st = read_lines(o.replay, [&](std::int64_t ns, std::string_view text) {
         const std::uint64_t a = tsc::start();
         std::uint64_t in_engine = 0;
@@ -461,6 +463,26 @@ int replay(const Options& o) {
                  parse.percentile(50) * ns, parse.percentile(99) * ns, parse.percentile(99.9) * ns,
                  engine.percentile(50) * ns, engine.percentile(99) * ns, engine.percentile(99.9) * ns,
                  (unsigned long long)dec.fallbacks());
+    if (o.engine.venue) {
+        const exec::SimStats& v = e.venue_stats();
+        std::fprintf(stderr, "venue orders %llu rejects %llu maker_fills %llu taker_fills %llu cancels %llu dropped %llu dup %llu held %llu settle_failed %llu | oms illegal %llu duplicates %llu orphan_settles %llu timeouts %llu mismatches %llu open %u | position_mismatches %llu kill %d\n",
+                     (unsigned long long)v.orders, (unsigned long long)v.rejects, (unsigned long long)v.maker_fills,
+                     (unsigned long long)v.taker_fills, (unsigned long long)v.cancels, (unsigned long long)v.dropped,
+                     (unsigned long long)v.duplicated, (unsigned long long)v.held, (unsigned long long)v.settle_failed,
+                     (unsigned long long)e.oms().illegal_count(), (unsigned long long)e.oms().duplicates(),
+                     (unsigned long long)e.oms().orphan_settlements(),
+                     (unsigned long long)e.oms().timeouts(), (unsigned long long)e.oms().mismatches(), e.oms().open_orders(),
+                     (unsigned long long)e.position_mismatches(), static_cast<int>(e.exec_risk().kill_reason()));
+        if (e.oms().illegal_count())
+            std::fprintf(stderr, "first illegal report: kind %d on order state %d reason %d\n", e.oms().first_illegal().first, e.oms().first_illegal().second, e.oms().first_illegal_reason());
+    }
+    if (!o.dump_fills.empty()) {
+        std::FILE* f = std::fopen(o.dump_fills.c_str(), "w");
+        if (!f) throw std::runtime_error("cannot write " + o.dump_fills.string());
+        for (const MakerFill& m : fills)
+            std::fprintf(f, "%lld %u %c %d %.6f\n", static_cast<long long>(m.ns), m.token, m.buy ? 'B' : 'S', m.px, m.qty);
+        std::fclose(f);
+    }
     summary(e, dh, stdout);
     return 0;
 }
@@ -618,6 +640,27 @@ int main(int argc, char** argv) {
         else if (a == "--record") o.record = val();
         else if (a == "--record-cap-gb") o.record_cap_gb = num();
         else if (a == "--replay") o.replay = val();
+        else if (a == "--dump-fills") o.dump_fills = val();
+        else if (a == "--venue") o.engine.venue = true;
+        else if (a == "--venue-compat") {  // parity with the makers' own fill model (D25)
+            o.engine.venue = true, o.engine.sim.compat_side = true, o.engine.long_only = false;
+            exec::RiskLimits& r = o.engine.risk;
+            r.allow_short = true, r.collar_ticks = 10'000, r.max_open_per_token = r.max_open = 1u << 30;
+            r.token_cap = r.group_cap = r.gross_cap = r.daily_stop = 100'000'000 * exec::kDollar;
+            r.order_burst = r.sustained_burst = r.cancel_burst = r.order_rate_per_s = r.sustained_rate_per_s = r.cancel_rate_per_s = 1'000'000'000;
+        }
+        else if (a == "--lat-ms") o.engine.sim.lat_in = o.engine.sim.lat_out = static_cast<exec::Ns>(num() * 1e6);
+        else if (a == "--jitter-ms") o.engine.sim.jitter = static_cast<exec::Ns>(num() * 1e6);
+        else if (a == "--seed") o.engine.sim.seed = static_cast<std::uint64_t>(num());
+        else if (a == "--drop-ack") o.engine.sim.p_drop_ack_ppm = static_cast<std::uint32_t>(num() * 1e6);
+        else if (a == "--drop-fill") o.engine.sim.p_drop_fill_ppm = static_cast<std::uint32_t>(num() * 1e6);
+        else if (a == "--dup") o.engine.sim.p_dup_ppm = static_cast<std::uint32_t>(num() * 1e6);
+        else if (a == "--settle-fail") o.engine.sim.p_settle_fail_ppm = static_cast<std::uint32_t>(num() * 1e6);
+        else if (a == "--disconnect") {  // "every_s:for_s"
+            const std::string v = val();
+            o.engine.sim.disc_every = static_cast<exec::Ns>(std::atof(v.c_str()) * 1e9);
+            o.engine.sim.disc_for = static_cast<exec::Ns>(std::atof(v.substr(v.find(':') + 1).c_str()) * 1e9);
+        }
         else if (a == "--seconds") o.seconds = num();
         else if (a == "--cpu") o.cpu = static_cast<int>(num());
         else if (a == "--no-quote") o.engine.quote = false;

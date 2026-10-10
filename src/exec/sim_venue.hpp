@@ -65,7 +65,11 @@ class SimVenue {
     void request(const VenueReq& r, Ns now) {
         const std::uint32_t i = alloc_req();
         reqs_[i] = {r, false};
-        q_.push(static_cast<std::uint64_t>(now + c_.lat_in + jitter(++nreq_, 1)), engine::Kind::OrderArrival, i);
+        // One connection: requests arrive in the order they were sent, whatever the jitter.
+        Ns at = now + c_.lat_in + jitter(++nreq_, 1);
+        if (at < last_arrival_) at = last_arrival_;
+        last_arrival_ = at;
+        q_.push(static_cast<std::uint64_t>(at), engine::Kind::OrderArrival, i);
     }
 
     // Processes everything scheduled before `t` (or at `t` too when `inclusive`): arrivals and
@@ -136,6 +140,9 @@ class SimVenue {
     }
 
     const SimStats& stats() const { return stats_; }
+    // The venue's view of our position per token: every fill, less fills whose settlement it
+    // decided will fail (the SettleFailed report reaches us settle_delay later).
+    Qty position(std::uint32_t t) const { return toks_[t].pos; }
     std::size_t scheduled() const { return q_.size(); }
 
     // Venue-side invariants (V15-V17), for tests: every order's fills add up to its cumulative
@@ -189,6 +196,7 @@ class SimVenue {
         bool closed = false;
         std::vector<std::uint32_t> resting;
         std::vector<Overlay> overlay;  // shares our taker orders took per level, until the level updates
+        Qty pos = 0;
     };
 
     static Qty to_qty(double shares) { return static_cast<Qty>(shares * 1e6 + 0.5); }
@@ -230,9 +238,11 @@ class SimVenue {
         fills_[f] = {id, px, q, fee, o.fills};
         o.fills = f;
         o.cum += q, o.rem -= q;
+        toks_[o.token].pos += o.side == Side::Buy ? q : -q;
         report(now, {VenueRpt::Fill, VenueRpt::None, kNone, px, q, fee, o.cl, o.vid, id, now});
         const bool fails = chance(c_.p_settle_fail_ppm, static_cast<std::uint32_t>(id), 6);
         stats_.settle_failed += fails;
+        if (fails) toks_[o.token].pos -= o.side == Side::Buy ? q : -q;
         report(now + c_.settle_delay, {fails ? VenueRpt::SettleFailed : VenueRpt::Settled, VenueRpt::None, kNone, 0, 0, 0, o.cl, o.vid, id, now}, false);
     }
 
@@ -422,7 +432,7 @@ class SimVenue {
     std::uint32_t used_req_ = 0, free_req_ = book::kNoOrder, used_rpt_ = 0, free_rpt_ = book::kNoOrder;
     std::uint32_t nreq_ = 0, nrpt_ = 0;
     std::uint64_t vid_seq_ = 0, fill_seq_ = 0;
-    Ns last_delivery_ = 0;
+    Ns last_delivery_ = 0, last_arrival_ = 0;
     SimStats stats_;
 };
 

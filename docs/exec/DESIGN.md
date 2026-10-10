@@ -29,7 +29,8 @@ States: PendingNew, Live, Partial, PendingCancel, Filled, Cancelled, Rejected, E
 | S11 | PendingCancel | timeout T_cxl | Unknown | freeze token; request Status |
 | S12 | Unknown | Status/any report | implied state | unfreeze when token has no Unknown |
 | S13 | any | overfill, report for terminal order (not dup), unknown cl_id | unchanged | illegal++, log, kill |
-| S14 | any | duplicate fill_id | unchanged | dup++, ignore |
+| S14 | any | duplicate fill_id; the same final report again (CancelAck on Cancelled, Expired on Expired, Reject on Rejected) | unchanged | dup++, ignore |
+| S14b | PendingCancel never acked | Reject | Rejected | a cancel can go out before the ack |
 
 - S18 Settlement (D16): each fill is Matched on arrival; Settled -> confirmed; SettleFailed -> the ledger reverses the fill (opposite fill, fee refunded). The order's cum and state are not changed: the venue considers the order filled. Counted (settle_failures).
 - S15 Fill application is by quantity, idempotent by fill_id. Every fill id of an order is kept (list in a shared index-addressed pool, freed with the order). An 8-entry ring was tried first; the property test showed a duplicate of an older fill slipping through (order filled in > 8 pieces).
@@ -60,7 +61,7 @@ Post-trade / 100 ms tick:
 - R11 gross inventory cap -> pause new opening orders (closing allowed).
 - R12 stale feed per connection -> cancel that connection's tokens' orders, freeze.
 - R13 reject spike: > K rejects in T s -> kill.
-- R14 reconcile mismatch (OMS vs SimVenue status, ledger vs sum of fills) -> kill.
+- R14 reconcile mismatch -> kill. Two checks: Status cumulative fill vs ours (Oms), and every risk tick the venue's position per token vs the ledger's (Engine); a difference lasting longer than settle_delay + 2*(latency + jitter) + disconnect + 1 s is a missing fill. Settlement for an unseen fill id is counted (orphan), the position check decides.
 - R15 leg exposure (incomplete arb set) > bound for > T_leg -> kill.
 
 - R16 KillSwitch: trip(reason) -> cancel all open, block R1, write kill.log with full state; reset only by D11.
@@ -106,6 +107,7 @@ Limits (print in every report): L2 has no order ids (queue estimated); others do
 ## V-impl SimVenue mechanics (E3)
 
 - V20 Books: the venue reads the same per-token books the strategies see, through a callable book(t) (as ArbScanner does); no second copy.
+- V21b One connection each way: requests reach the venue in the order sent, reports reach us in the order sent, whatever the jitter (settlement excepted: own stream).
 - V21 Scheduling: one engine::EventQueue. Request arrival at t_send + L_in is OrderArrival; report delivery at t_venue + L_out is Report. At equal times Market < OrderArrival < Report (D7), so an order arriving in the same nanosecond as a market event sees the book after it.
 - V22 Resting orders per token in a small index-addressed list: {cl_id, venue_id, side, px, rem, ahead, cum, fills}. Venue keeps its own record of every fill per order (for Status resends, S19).
 - V23 New: rule checks (V6) -> Reject; post-only that would match -> Reject; marketable part with a token delay (rules.delay_ms) -> Ack(Delayed), match at +delay against the book then; else match at once: walk opposite levels best first while price within limit; per level take min(remaining, displayed - overlay); fill at the level price; FOK checks the total first (all or Expired); FAK fills then Expired for the rest; GTC/GTD rests the remainder with ahead = displayed size at its price (0 if it improves the best). Ack status: Live, Matched or Delayed.

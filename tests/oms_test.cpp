@@ -94,9 +94,9 @@ const int kNext[9][kEv] = {
     /*Partial */ {int(S::Partial),     X,                    int(S::Partial),    int(S::Filled),     int(S::Cancelled),     int(S::Partial),       int(S::Expired),     int(S::Partial),     int(S::Partial),     int(S::Partial)},
     /*PendCxl */ {int(S::PendingCancel), X,                  int(S::PendingCancel), int(S::Filled),  int(S::Cancelled),     int(S::Live),          int(S::Expired),     int(S::PendingCancel), int(S::PendingCancel), int(S::PendingCancel)},
     /*Filled  */ {int(S::Filled),      X,                    X,                  X,                  X,                     int(S::Filled),        X,                   int(S::Filled),      int(S::Filled),      int(S::Filled)},
-    /*Cancelld*/ {int(S::Cancelled),   X,                    X,                  X,                  X,                     int(S::Cancelled),     X,                   int(S::Cancelled),   int(S::Cancelled),   int(S::Cancelled)},
-    /*Rejected*/ {X,                   X,                    X,                  X,                  X,                     int(S::Rejected),      X,                   int(S::Rejected),    int(S::Rejected),    int(S::Rejected)},
-    /*Expired */ {int(S::Expired),     X,                    X,                  X,                  X,                     int(S::Expired),       X,                   int(S::Expired),     int(S::Expired),     int(S::Expired)},
+    /*Cancelld*/ {int(S::Cancelled),   X,                    X,                  X,                  int(S::Cancelled),     int(S::Cancelled),     X,                   int(S::Cancelled),   int(S::Cancelled),   int(S::Cancelled)},
+    /*Rejected*/ {X,                   int(S::Rejected),     X,                  X,                  X,                     int(S::Rejected),      X,                   int(S::Rejected),    int(S::Rejected),    int(S::Rejected)},
+    /*Expired */ {int(S::Expired),     X,                    X,                  X,                  X,                     int(S::Expired),       int(S::Expired),                   int(S::Expired),     int(S::Expired),     int(S::Expired)},
     /*Unknown */ {int(S::Live),        int(S::Rejected),     int(S::Unknown),    int(S::Filled),     int(S::Cancelled),     int(S::Live),          int(S::Expired),     int(S::Live),        int(S::Cancelled),   int(S::Rejected)},
 };
 
@@ -232,6 +232,27 @@ RC_GTEST_PROP(Oms, MatchesANaiveReferenceUnderRandomReports, ()) {
         RC_ASSERT(g.oms.frozen(0) == ref_frozen);
         RC_ASSERT(g.ledger.identity_holds());
     }
+}
+
+TEST(Oms, RejectAfterAnEarlyCancelIsLegalButNotAfterAnAck) {
+    Rig g;
+    const std::uint64_t a = g.buy();
+    g.oms.cancel(a, kSec, g.sink());  // before any ack
+    g.plain(a, VenueRpt::Reject);
+    EXPECT_EQ(g.oms.order(a)->state, S::Rejected);
+    EXPECT_EQ(g.oms.illegal_count(), 0u);
+    const std::uint64_t b = g.buy();
+    g.ack(b);
+    g.oms.cancel(b, kSec, g.sink());
+    g.plain(b, VenueRpt::Reject);  // acked orders are not rejected later
+    EXPECT_EQ(g.oms.illegal_count(), 1u);
+}
+
+TEST(Oms, SettlementForAFillWeNeverSawIsCountedNotIllegal) {
+    Rig g;
+    g.report({VenueRpt::Settled, VenueRpt::None, 0, 0, 0, 0, 1, 1, 424242, 0});
+    EXPECT_EQ(g.oms.orphan_settlements(), 1u);
+    EXPECT_EQ(g.oms.illegal_count(), 0u);
 }
 
 TEST(Oms, DuplicateFillsAreIgnored) {

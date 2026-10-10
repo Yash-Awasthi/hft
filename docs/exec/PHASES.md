@@ -43,11 +43,14 @@ Step template: do -> check. "Ask" = stop and ask the owner before continuing.
 - [x] E3.3 Faults (D14, D16): core V18, V9, V10, V11, V14 with Philox, each forced on in a test; V8, V12, V13 optional.
 - [x] E3.3b Venue rules: F8 min size, F10 delay, D18 fees tested in SimVenue; L6 merge/split in Ledger; D19 batches belong to the executor (E5). F6 rounding never applies to our orders: 2-dp sizes times tick-dp prices land exactly on the amount precision (3+2=5, 2+2=4, 4+2=6). F12 cancel-only mode not seen in data: deferred.
 - Mutations: overlay off, ahead not capped, FOK check off, settlement ordered, compat side inverted: 5/5 caught. One release segfault during the mutation script did not reproduce (0/11, ASan and UBSan clean).
-- [ ] E3.0 Measure on pm-snap: share of last_trade_price where feed side disagrees with the side implied by price vs the book just before (D21, RF27). Record in VENUE.md.
-- [ ] E3.4 Parity G3b prep: run maker on reference recording, old path, dump fills (ns, token, px, qty) to file.
-- [ ] E3.5 Maker quotes become intents (A2.7); fills via SimVenue with latency 0, faults off; compare dump: must be identical.
+- [x] E3.0 (F32) Measure on pm-snap: share of last_trade_price where feed side disagrees with the side implied by price vs the book just before (D21, RF27). Record in VENUE.md.
+- [x] E3.4 Parity G3b prep (pm_live --replay --dump-fills; ~/data/ref/maker_fills_old.txt): run maker on reference recording, old path, dump fills (ns, token, px, qty) to file.
+- [x] E3.5 Maker quotes become intents (EngineParams.venue; pm_live --venue-compat) (A2.7); fills via SimVenue with latency 0, faults off; compare dump: must be identical.
 - Ask if parity is not exact after one day of investigation (stop condition).
-- G3: (a) invariants hold on full reference recording under each fault mode; (b) maker parity exact.
+- G3: (a) invariants hold on full reference recording under each fault mode; (b) maker parity exact. MET 2026-10-10.
+  (b) scripts/check_parity.sh: decision hash and fills identical on every recording, default and high-fill maker settings (10/10 frozen runs; the run being recorded differs only because it grows; its frozen copy matches). Mutation (queue ahead forced to 0): 14 -> 17 fills, hash differs.
+  (a) scripts/fault_campaign.sh (50 ms latency, 20 ms jitter): no fault, drop ack 20%, duplicate 20%, settlement failure 20%, disconnect 8 s/120 s: 0 illegal reports, no kill; drop fill 20%: kill on position mismatch. Duplicates leave the decision hash unchanged.
+  Found and fixed on the way: inbound requests reordered by jitter (a cancel overtook its order); Reject after an early cancel is legal; duplicate final reports and settlements for unseen fills are counted, not illegal; asynchronous fills were not logged; a dropped fill on an acked order went unnoticed until position reconciliation was added (R14).
 
 ## E4 pm_exec app
 

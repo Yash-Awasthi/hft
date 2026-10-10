@@ -27,7 +27,9 @@ class Ledger {
         Usd fee;
     };
 
-    explicit Ledger(Usd capital) : capital_(capital), cash_(capital), pending_(64), ids_(256) {}
+    // long_only false allows short positions (only for comparing with models that assume them).
+    explicit Ledger(Usd capital, bool long_only = true)
+        : capital_(capital), cash_(capital), pending_(64), ids_(256), long_only_(long_only) {}
 
     // Setup only: per-token state for tokens [0, n).
     void ensure(std::uint32_t n) {
@@ -162,7 +164,7 @@ class Ledger {
         // settlement can do that) takes all the cost and is a deficit.
         Usd removed = k.cost;
         if (q <= k.pos) removed = static_cast<Usd>(static_cast<__int128>(k.cost) * q / k.pos);
-        else ++deficits_;
+        else if (long_only_) ++deficits_;
         cash_ += amount - fee;
         realised_ += amount - removed;
         add_cost(k, -removed);
@@ -192,6 +194,7 @@ class Ledger {
     __int128 capital_ns_ = 0;
     Ns last_tick_ = 0;
     bool have_tick_ = false;
+    bool long_only_;
 };
 
 }  // namespace hft::exec
