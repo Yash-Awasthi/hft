@@ -38,10 +38,11 @@ Step template: do -> check. "Ask" = stop and ask the owner before continuing.
 
 ## E3 SimVenue
 
-- [ ] E3.1 Matching V1..V7 with unit tests on constructed books (taker walk, overlay clear, maker ahead, Fok/Fak/Gtc, fees, rule rejects).
-- [ ] E3.2 Invariants V15..V17 as always-on checks in tests and debug builds.
-- [ ] E3.3 Faults (D14, D16): core V18, V9, V10, V11, V14 with Philox, each forced on in a test; V8, V12, V13 optional.
-- [ ] E3.3b Venue rules from VENUE.md: F6 rounding, F8 min size, F10 sports delay, F12 modes, D18 fees, D19 batches, L6 merge/split; one test each.
+- [x] E3.1 (see commit) Matching V1..V7 with unit tests on constructed books (taker walk, overlay clear, maker ahead, Fok/Fak/Gtc, fees, rule rejects).
+- [x] E3.2 Invariants V15..V17 as always-on checks in tests and debug builds.
+- [x] E3.3 Faults (D14, D16): core V18, V9, V10, V11, V14 with Philox, each forced on in a test; V8, V12, V13 optional.
+- [x] E3.3b Venue rules: F8 min size, F10 delay, D18 fees tested in SimVenue; L6 merge/split in Ledger; D19 batches belong to the executor (E5). F6 rounding never applies to our orders: 2-dp sizes times tick-dp prices land exactly on the amount precision (3+2=5, 2+2=4, 4+2=6). F12 cancel-only mode not seen in data: deferred.
+- Mutations: overlay off, ahead not capped, FOK check off, settlement ordered, compat side inverted: 5/5 caught. One release segfault during the mutation script did not reproduce (0/11, ASan and UBSan clean).
 - [ ] E3.0 Measure on pm-snap: share of last_trade_price where feed side disagrees with the side implied by price vs the book just before (D21, RF27). Record in VENUE.md.
 - [ ] E3.4 Parity G3b prep: run maker on reference recording, old path, dump fills (ns, token, px, qty) to file.
 - [ ] E3.5 Maker quotes become intents (A2.7); fills via SimVenue with latency 0, faults off; compare dump: must be identical.
