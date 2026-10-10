@@ -30,7 +30,7 @@ struct ArbParams {
     Ns merge_delay = 0;                 // L6: relayer latency for merge and split
 };
 
-enum class ArbFilter : std::uint8_t { Pass, Young, Stale, Frozen, SelfCross, Size, Edge, kCount };
+enum class ArbFilter : std::uint8_t { Pass, Young, Stale, Frozen, OneSided, SelfCross, Size, Edge, kCount };
 
 // One leg as the executor sees it.
 struct LegView {
@@ -43,6 +43,7 @@ struct LegView {
     Qty (*taken)(const void* venue, std::uint32_t token, bool book_bid, Px px) = nullptr;
     const void* venue = nullptr;
     std::uint32_t token = 0;
+    Px collar = kPxOne;  // how far past the best an order may go (risk R3)
 };
 
 struct Plan {
@@ -67,6 +68,8 @@ inline Plan plan(bool buy, const LegView* legs, std::size_t n, Ns now, Ns opened
         if (now - legs[i].updated > p.fresh) return {ArbFilter::Stale, 0, 0};
     for (std::size_t i = 0; i < n; ++i)
         if (legs[i].frozen) return {ArbFilter::Frozen, 0, 0};
+    for (std::size_t i = 0; i < n; ++i)
+        if (!legs[i].book->two_sided()) return {ArbFilter::OneSided, 0, 0};  // risk refuses those (R3)
     Px sum = 0, allowance = 0;
     Qty depth = p.max_set, min_qty = 0;
     for (std::size_t i = 0; i < n; ++i) {
@@ -101,8 +104,10 @@ inline Plan plan(bool buy, const LegView* legs, std::size_t n, Ns now, Ns opened
 // `limit` gets the last level's price. -1 if the book is not deep enough.
 inline Usd walk(const LegView& v, bool buy, Qty q, Px* limit) {
     const pm::TokenBook& b = *v.book;
+    if (!b.two_sided()) return -1;  // risk refuses any order on a one-sided book (R3)
+    const Px best = buy ? b.best_ask() : b.best_bid();
     Usd u = 0;
-    for (Px px = buy ? b.best_ask() : b.best_bid(); px >= 0 && q > 0;
+    for (Px px = best; px >= 0 && q > 0 && (buy ? px <= best + v.collar : px >= best - v.collar);
          px = buy ? b.ask_at_or_above(px + 1) : b.bid_at_or_below(px - 1)) {
         const Qty at = level_qty(v, !buy, px);
         const Qty take = at < q ? at : q;
@@ -158,7 +163,8 @@ struct ArbStats {
 // Runs one attempt per group at a time (X9). The driver reports orders and settlements as they
 // happen and calls process() after delivering venue reports: decisions are taken there, never
 // inside the order manager's callbacks. Ctx gives the executor its view and its actions:
-//   LegView view(token); std::uint64_t submit(token, side, tif, px, qty, tag) (0: risk refused);
+//   const pm::TokenBook& book(token); LegView view(token);
+//   std::uint64_t submit(token, side, tif, px, qty, tag) (0: risk refused);
 //   void cancel(cl); void split(yes, no, qty); void merge(yes, no, qty); Usd cash(); Usd room(token);
 //   void kill().
 class ArbExec {
@@ -344,13 +350,13 @@ class ArbExec {
     template <class Ctx>
     void check(std::uint32_t gi, Ns now, Ctx& c) {
         Group& g = groups_[gi];
-        for (std::uint32_t i = 0; i < g.legs.size(); ++i) g.views[i] = c.view(g.legs[i].token);
         for (int s = 0; s < (g.pair ? 2 : 1); ++s) {
             const bool buy = s == 0;
             Px sum = 0;
             bool all = true;
-            for (const LegView& v : g.views) {
-                const Px px = buy ? v.book->best_ask() : v.book->best_bid();
+            for (const Leg& l : g.legs) {  // books only: views are built when a window can be taken
+                const pm::TokenBook& b = c.book(l.token);
+                const Px px = buy ? b.best_ask() : b.best_bid();
                 all = all && px >= 0, sum += px;
             }
             const bool open = all && (buy ? sum < kPxOne : sum > kPxOne);
@@ -361,6 +367,7 @@ class ArbExec {
             }
             if (!g.opened[s]) g.opened[s] = now, g.attempted[s] = false, ++stats_.windows;
             if (g.st != State::Idle || !p_.on || g.attempted[s]) continue;  // one attempt per window
+            for (std::uint32_t i = 0; i < g.legs.size(); ++i) g.views[i] = c.view(g.legs[i].token);
             const Plan pl = plan(buy, g.views.data(), g.views.size(), now, g.opened[s], c.cash(), c.room(g.legs[0].token), p_);
             g.last[s] = pl.why;
             if (pl.why != ArbFilter::Pass) continue;
@@ -412,10 +419,10 @@ class ArbExec {
         Qty n = g.held[0] < g.held[1] ? g.held[0] : g.held[1];
         for (const Leg& l : g.legs) n = l.confirmed < n ? l.confirmed : n;
         if (n <= 0) return;  // waiting for settlement
+        for (std::uint32_t i = 0; i < 2; ++i) add(g, i, -n), g.legs[i].confirmed -= n;  // before: the driver reads held
         c.merge(g.legs[0].token, g.legs[1].token, n);
         ++stats_.merges;
         g.cash += notional(kPxOne, n);
-        for (std::uint32_t i = 0; i < 2; ++i) add(g, i, -n), g.legs[i].confirmed -= n;
         if (min_held(g) == 0 && g.held[0] == g.held[1]) finish(g);
     }
 

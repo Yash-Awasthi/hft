@@ -224,7 +224,7 @@ struct GroupRow {
 // are reused, so taking it allocates nothing after the first second.
 constexpr const char* kRejectNames[] = {"none", "killed", "frozen", "tick", "size", "no_book", "collar",
                                        "self_cross", "position", "group", "gross", "cash", "throttle", "too_many"};
-constexpr const char* kFilterNames[] = {"pass", "young", "stale", "frozen", "self_cross", "size", "edge"};
+constexpr const char* kFilterNames[] = {"pass", "young", "stale", "frozen", "one_sided", "self_cross", "size", "edge"};
 static_assert(std::size(kFilterNames) == static_cast<std::size_t>(exec::ArbFilter::kCount));
 constexpr const char* kKillNames[] = {"none", "operator", "loss", "deficit", "reject_spike", "mismatch", "leg_exposure", "internal"};
 static_assert(std::size(kRejectNames) == static_cast<std::size_t>(exec::Reject::kCount));
@@ -508,6 +508,8 @@ void exec_summary(const Options& o, const Engine& e, const DecisionHash& dh) {
         {"taker_fills", std::to_string(v.taker_fills)},
         {"settle_failed", std::to_string(e.oms().settle_failures())},
         {"illegal_reports", std::to_string(e.oms().illegal_count())},
+        {"unknown_timeouts", std::to_string(e.oms().timeouts())},
+        {"oms_mismatches", std::to_string(e.oms().mismatches())},
         {"position_mismatches", std::to_string(e.position_mismatches())},
         {"kill", kKillNames[static_cast<int>(e.exec_risk().kill_reason())]},
         {"open_orders", std::to_string(e.oms().open_orders())},
@@ -563,6 +565,7 @@ int replay(const Options& o) {
     Histogram parse, engine;
     std::vector<MakerFill> fills;
     if (!o.dump_fills.empty()) e.set_fill_log(&fills);
+    const std::int64_t wall0 = tsc::mono_ns();
     const auto st = read_lines(o.replay, [&](std::int64_t ns, std::string_view text) {
         const std::uint64_t a = tsc::start();
         std::uint64_t in_engine = 0;
@@ -576,6 +579,7 @@ int replay(const Options& o) {
         if (!kill_seen && e.exec_risk().killed()) kill_log(o, e), kill_seen = true;
         return ok;
     });
+    const double wall_s = static_cast<double>(tsc::mono_ns() - wall0) * 1e-9;
     e.finish(INT64_MAX);
     std::fprintf(stderr, "files %zu messages %llu parse_errors %llu\n", st.files, (unsigned long long)st.messages,
                  (unsigned long long)st.parse_errors);
@@ -584,6 +588,15 @@ int replay(const Options& o) {
                  parse.percentile(50) * ns, parse.percentile(99) * ns, parse.percentile(99.9) * ns,
                  engine.percentile(50) * ns, engine.percentile(99) * ns, engine.percentile(99.9) * ns,
                  (unsigned long long)dec.fallbacks());
+    if (const Engine::Profile* p = e.profile()) {
+        auto row = [&](const char* name, const Histogram& h) {
+            std::fprintf(stderr, " %s %.0f/%.0f/%.0f (n %llu)", name, h.percentile(50) * ns, h.percentile(99) * ns,
+                         h.percentile(99.9) * ns, static_cast<unsigned long long>(h.count()));
+        };
+        std::fprintf(stderr, "profile ns p50/p99/p99.9:");
+        row("parse", parse), row("engine", engine), row("submit", p->submit), row("deliver", p->deliver), row("venue", p->venue);
+        std::fprintf(stderr, "; messages/s %.0f\n", static_cast<double>(st.messages) / wall_s);
+    }
     if (o.engine.venue) {
         const exec::SimStats& v = e.venue_stats();
         std::fprintf(stderr, "venue orders %llu rejects %llu maker_fills %llu taker_fills %llu cancels %llu dropped %llu dup %llu held %llu settle_failed %llu | oms illegal %llu duplicates %llu orphan_settles %llu timeouts %llu mismatches %llu open %u | position_mismatches %llu kill %d\n",

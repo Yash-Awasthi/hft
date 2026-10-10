@@ -72,14 +72,14 @@ Step template: do -> check. "Ask" = stop and ask the owner before continuing.
 
 ## E6 Demo and benchmarks (D12)
 
-- [ ] E6.1 Benchmarks on the reference recording (native, pinned): per-stage latency p50/p99/p99.9 (parse, engine, risk, OMS, sim), messages/s, intent-to-request p99; table in docs/exec/RESULTS.md with the command for each row.
-- [ ] E6.2 Demo scripts in `scripts/demo/`, each one command, printing a known decision hash:
+- [x] E6.1 Benchmarks on the reference recording (native, pinned): per-stage latency p50/p99/p99.9 (parse, engine, risk, OMS, sim), messages/s, intent-to-request p99; table in docs/exec/RESULTS.md with the command for each row. `pm_exec --profile`; risk is inside submit (the order manager calls it), measured alone by hft_bench.
+- [x] E6.2 Demo scripts in `scripts/demo/`, each one command, printing a known decision hash:
   (a) clean replay with maker + arb;
   (b) replay with core faults on: OMS reaches Unknown, reconciles, ledger mismatch zero;
   (c) leg-risk incident: one leg dropped, executor completes or unwinds within bound;
   (d) kill switch: trip by KILL file mid-run, all orders cancelled, no new orders, kill.log written.
-- [ ] E6.3 pm_exec summary output: arb windows seen / filtered (by filter) / attempted / completed / incomplete (by action), maker fills, net PnL after fees, at measured RTT and 50/150/300 ms (D4). Record in RESULTS.md as measured, with the V-limits.
-- G6: every number in RESULTS.md reproducible from its command line; every demo prints its expected hash.
+- [x] E6.3 pm_exec summary output: arb windows seen / filtered (by filter) / attempted / completed / incomplete (by action), maker fills, net PnL after fees, at measured RTT and 50/150/300 ms (D4). Record in RESULTS.md as measured, with the V-limits. scripts/latency_sweep.sh. Found on the way: the executor's merge lowered its holdings after the ledger merge (the maker saw negative inventory and the legacy loss stop halted it), and it sent orders risk refuses (one-sided books, past the collar); fixed with tests.
+- G6: every number in RESULTS.md reproducible from its command line; every demo prints its expected hash. MET 2026-10-10 (counts and hashes exact; timings within 5% run to run).
 
 ## E7 Hardening
 

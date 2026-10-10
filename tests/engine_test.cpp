@@ -281,6 +281,8 @@ TEST(EngineArb, PairBuySideBuysBothLegsAndMergesOnceSettled) {
     feed(e, {{3 * kS, control("_heartbeat", 0)}});  // settled: merged into 100 USD
     EXPECT_EQ(e.ledger().pos(y), 0);
     EXPECT_EQ(e.ledger().pos(n), 0);
+    EXPECT_EQ(e.maker(y).inventory(), 0);  // the merge was the executor's, not the maker's
+    EXPECT_EQ(e.maker(n).inventory(), 0);
     const auto& s = e.arb_exec().stats();
     EXPECT_EQ(s.attempts, 1u);
     EXPECT_EQ(s.complete, 1u);

@@ -1,7 +1,7 @@
 // Paper execution on the prediction-market stream: makers quote through risk, the order manager
 // and the simulated venue, configured by a run file (exec.cfg). No order ever leaves the machine.
 //
-//   pm_exec --replay DIR [--config FILE]... [--set KEY=VALUE]... [--run OUT]
+//   pm_exec --replay DIR [--config FILE]... [--set KEY=VALUE]... [--run OUT] [--profile]
 //   pm_exec --paper --run OUT --config FILE [--set KEY=VALUE]... [--seconds S] [--port P] [--cpu C]
 //           [--spin] [--events N] [--max-tokens N] [--tokens-per-conn N] [--record-cap-gb G]
 //           [--exec-dir DIR] [--reset-kill]
@@ -47,7 +47,7 @@ std::uint16_t next_session(const fs::path& dir) {
 
 int usage() {
     std::fprintf(stderr,
-                 "usage: pm_exec --replay DIR [--config FILE]... [--set KEY=VALUE]... [--run OUT]\n"
+                 "usage: pm_exec --replay DIR [--config FILE]... [--set KEY=VALUE]... [--run OUT] [--profile]\n"
                  "       pm_exec --paper --run OUT --config FILE [--set KEY=VALUE]... [--seconds S] [--port P]\n"
                  "               [--cpu C] [--spin] [--events N] [--max-tokens N] [--tokens-per-conn N]\n"
                  "               [--record-cap-gb G] [--exec-dir DIR] [--reset-kill]\n");
@@ -88,6 +88,7 @@ int main(int argc, char** argv) {
         else if (a == "--max-tokens") o.max_tokens = static_cast<int>(num());
         else if (a == "--tokens-per-conn") o.tokens_per_conn = std::max(1, static_cast<int>(num()));
         else if (a == "--record-cap-gb") o.record_cap_gb = num();
+        else if (a == "--profile") o.engine.profile = true;
         else {
             std::fprintf(stderr, "unknown option %s\n", a.c_str());
             return usage();

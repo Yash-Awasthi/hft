@@ -5,7 +5,7 @@ Terse reference docs; ids are stable, cite them in commits and code comments whe
 
 ## Status
 
-- Current: E0-E3, E5 done (G0-G3, G5 met 2026-10-10); E4 done except the G4 1 h paper run. Next: G4, then E6.
+- Current: E0-E3, E5, E6 done (G0-G3, G5, G6 met 2026-10-10); E4 done except the G4 1 h paper run. Next: G4, then E7.
 - Branch: `exec-layer` (from `phase1-hotpath`).
 - Baseline hashes (must stay equal unless a step says otherwise):
   - `pm_live --replay ~/data/pm-live/20261009T160027Z` -> `decision_hash 6facf575ad8d84bc`
@@ -24,6 +24,7 @@ Terse reference docs; ids are stable, cite them in commits and code comments whe
 | REFS.md | references mapped to components | RF* |
 | HW.md | machine facts, measurement conditions | H* |
 | PERF.md | build and runtime measurements, what was adopted and why not | P*, R* |
+| RESULTS.md | E6 latency, demos, makers and arbitrage at four latencies | - |
 
 ## Conventions
 

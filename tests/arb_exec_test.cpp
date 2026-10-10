@@ -24,7 +24,10 @@ struct Legs {
     std::vector<pm::MarketRules> rules;
     std::vector<LegView> v;
     explicit Legs(std::size_t n, pm::MarketRules r = no_fees()) : books(n), rules(n, r) {
-        for (std::size_t i = 0; i < n; ++i) v.push_back({&books[i], &rules[i], 10 * kS, false, -1, -1});
+        for (std::size_t i = 0; i < n; ++i) {
+            v.push_back({&books[i], &rules[i], 10 * kS, false, -1, -1});
+            books[i].set(true, 100, 1), books[i].set(false, 9900, 1);  // far levels: books are two-sided
+        }
     }
     void ask(std::size_t i, Px px, double size) { books[i].set(false, px, size); }
     void bid(std::size_t i, Px px, double size) { books[i].set(true, px, size); }
@@ -78,7 +81,9 @@ TEST(ArbExec, FiltersEachRefuseInOrder) {
     EXPECT_EQ(buy(l, p).why, ArbFilter::Stale);  // leg 1 last seen 1 s ago
     l.v[1].updated = 10 * kS, l.v[0].frozen = true;
     EXPECT_EQ(buy(l, p).why, ArbFilter::Frozen);
-    l.v[0].frozen = false, l.v[1].own_ask = 5000;
+    l.v[0].frozen = false, l.bid(0, 100, 0);
+    EXPECT_EQ(buy(l, p).why, ArbFilter::OneSided);
+    l.bid(0, 100, 1), l.v[1].own_ask = 5000;
     EXPECT_EQ(buy(l, p).why, ArbFilter::SelfCross);  // our own ask is the one we would buy
     l.v[1].own_ask = 5100;
     EXPECT_EQ(buy(l, p).why, ArbFilter::Pass);
@@ -119,10 +124,17 @@ TEST(ArbExec, WalkCostsLevelsAndRefusesBeyondDepth) {
     EXPECT_EQ(limit, 4100);
     EXPECT_EQ(walk(l.v[0], false, 6 * kShare, &limit), notional(3900, 5 * kShare) + notional(3800, kShare));
     EXPECT_EQ(limit, 3800);
-    EXPECT_EQ(walk(l.v[0], true, 31 * kShare, &limit), -1);
+    EXPECT_EQ(walk(l.v[0], true, 32 * kShare, &limit), -1);  // 31 there, one of them the far 0.99
+    l.v[0].collar = 50;  // risk lets an order go 0.005 past the best: the 0.41 level is out of reach
+    EXPECT_EQ(walk(l.v[0], true, 11 * kShare, &limit), -1);
+    EXPECT_EQ(walk(l.v[0], true, 10 * kShare, &limit), notional(4000, 10 * kShare));
+    l.v[0].collar = kPxOne;
+    Legs one(1);
+    one.ask(0, 4000, 100), one.bid(0, 100, 0);  // no bids: risk refuses any order on a one-sided book (R3)
+    EXPECT_EQ(walk(one.v[0], true, kShare, &limit), -1);
     // What we already took at 0.40 is not there for us until the feed updates the level.
     l.v[0].taken = [](const void*, std::uint32_t, bool bid, Px px) -> Qty { return !bid && px == 4000 ? 6 * kShare : 0; };
-    EXPECT_EQ(walk(l.v[0], true, 25 * kShare, &limit), -1);
+    EXPECT_EQ(walk(l.v[0], true, 26 * kShare, &limit), -1);
     EXPECT_EQ(walk(l.v[0], true, 24 * kShare, &limit), notional(4000, 4 * kShare) + notional(4100, 20 * kShare));
 }
 

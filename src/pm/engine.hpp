@@ -16,6 +16,8 @@
 #include <string_view>
 #include <vector>
 
+#include "core/histogram.hpp"
+#include "core/tsc.hpp"
 #include "exec/arb_exec.hpp"
 #include "exec/oms.hpp"
 #include "exec/sim_venue.hpp"
@@ -41,6 +43,7 @@ struct EngineParams {
     exec::Usd capital = 1'000'000 * exec::kDollar;  // paper account (D3)
     std::uint16_t session = 1;  // top bits of every client order id (DESIGN T6)
     exec::ArbParams arb;        // arbitrage executor, venue mode only
+    bool profile = false;       // time order submission, report delivery and venue matching (tsc ticks)
 };
 
 struct Decision {
@@ -61,7 +64,17 @@ class Engine {
           risk_(p.risk),
           oms_(p.session, risk_, exp_, ledger_, oms_config(p.sim)),
           sim_(p.sim, BookOf{this}),
-          ax_(p.arb) {}
+          ax_(p.arb) {
+        if (p.profile) prof_ = std::make_unique<Profile>();
+    }
+
+    // Stage timings in tsc ticks: submit = risk checks and order table up to the venue request
+    // (intent to request); deliver = one venue report through the order manager, ledger and its
+    // strategy; venue = matching and scheduling in each venue run that did work.
+    struct Profile {
+        Histogram submit, deliver, venue;
+    };
+    const Profile* profile() const { return prof_.get(); }
 
     // Token index for an id, created on first sight.
     std::uint32_t token(std::string_view id) {
@@ -312,7 +325,9 @@ class Engine {
             const exec::OrderIntent in{i, s ? exec::Side::Sell : exec::Side::Buy, exec::Tif::Gtc, true, 0, px[s], q, 0};
             const exec::MarketView mv{t.maker.book.best_bid(), t.maker.book.best_ask(), t.seeded, !t.seeded, &rules_[i]};
             exec::Reject why;
+            const std::uint64_t t0 = prof_ ? tsc::start() : 0;
             t.live[s].cl = oms_.submit(in, mv, ns, sink, &why);
+            if (prof_) prof_->submit.record(tsc::stop() - t0);
             xh_.add(ns, i, s, px[s], q, why);
         }
         pump(ns);
@@ -322,11 +337,28 @@ class Engine {
     // order manager's callback), which may send more orders, delivered by the next round.
     void pump(std::int64_t ns) {
         for (int round = 0; round < 64; ++round) {
-            sim_.run(ns, true, [&](const exec::VenueRpt& r) { deliver(r, ns); });
+            if (prof_) {
+                timed_run(ns);
+            } else {
+                sim_.run(ns, true, [&](const exec::VenueRpt& r) { deliver(r, ns); });
+            }
             if (!ax_.dirty()) return;
             ArbCtx c{*this, ns};
             ax_.process(ns, c);
         }
+    }
+    void timed_run(std::int64_t ns) {
+        const std::size_t queued = sim_.scheduled();
+        std::uint64_t in_deliver = 0, n = 0;
+        const std::uint64_t t0 = tsc::start();
+        sim_.run(ns, true, [&](const exec::VenueRpt& r) {
+            const std::uint64_t a = tsc::start();
+            deliver(r, ns);
+            const std::uint64_t d = tsc::stop() - a;
+            prof_->deliver.record(d), in_deliver += d, ++n;
+        });
+        const std::uint64_t total = tsc::stop() - t0;
+        if (n || sim_.scheduled() != queued) prof_->venue.record(total - in_deliver);
     }
     void deliver(const exec::VenueRpt& r, std::int64_t ns) {
         if (r.kind == exec::VenueRpt::Reject) risk_.on_venue_reject(ns);
@@ -433,18 +465,21 @@ class Engine {
     struct ArbCtx {
         Engine& e;
         std::int64_t ns;
+        const TokenBook& book(std::uint32_t t) const { return e.toks_[t]->maker.book; }
         exec::LegView view(std::uint32_t t) const {
             const Tok& k = *e.toks_[t];
             return {&k.maker.book, &e.rules_[t], k.updated, e.oms_.frozen(t) || !k.seeded, e.exp_.own_bid(t), e.exp_.own_ask(t),
                     [](const void* v, std::uint32_t tk, bool bid, exec::Px px) { return static_cast<const exec::SimVenue<BookOf>*>(v)->taken(tk, bid, px); },
-                    &e.sim_, t};
+                    &e.sim_, t, e.p_.risk.collar_ticks * (e.rules_[t].tick > 0 ? e.rules_[t].tick : 1)};
         }
         std::uint64_t submit(std::uint32_t t, exec::Side side, exec::Tif tif, exec::Px px, exec::Qty q, std::uint32_t tag) {
             const Tok& k = *e.toks_[t];
             const exec::OrderIntent in{t, side, tif, false, kArb, px, q, tag};
             const exec::MarketView mv{k.maker.book.best_bid(), k.maker.book.best_ask(), k.seeded, !k.seeded, &e.rules_[t]};
             exec::Reject why;
+            const std::uint64_t t0 = e.prof_ ? tsc::start() : 0;
             const std::uint64_t cl = e.oms_.submit(in, mv, ns, [&](const exec::VenueReq& r) { e.send(r, ns); }, &why);
+            if (e.prof_) e.prof_->submit.record(tsc::stop() - t0);
             e.xh_.add(ns, t, side, px, q, why, kArb);
             return cl;
         }
@@ -477,6 +512,7 @@ class Engine {
     std::vector<MarketRules> rules_;
     std::vector<exec::Px> mid_, liq_;  // marks per token for the loss check
     exec::ArbExec ax_;
+    std::unique_ptr<Profile> prof_;
     std::vector<std::vector<std::uint32_t>> gtok_;  // groups as token lists, until setup
     std::vector<std::uint32_t> gid_;               // risk group (event) per token
     bool ready_ = false;
