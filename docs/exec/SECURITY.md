@@ -21,8 +21,9 @@ Scope: local paper system, no live orders (D1). Assets: correctness of results, 
 
 ## Gates (run at E7, and in CI after)
 
-- SEC-G1 `grep -rnE "clob\.|/order|private_key|secp256k1|keccak|signTypedData" src apps` -> no hits.
+- SEC-G1 `grep -rnE '[/"]clob\.|"/orders?\b|private_key|secp256k1|keccak|signTypedData' src apps` -> no hits. (First form `clob\.|/order` also matched the read-only market-data host `ws-subscriptions-clob...` and `book/order_store.hpp`.)
 - SEC-G2 `git ls-files | grep -E "\.(key|pem|env|secret)$"` -> empty.
 - SEC-G3 `ss -ltnp` during a paper run shows the HTTP port on 127.0.0.1 only.
 - SEC-G4 fuzz targets (itch, tape, oms) 60 s each clean in CI.
-- SEC-G5 `grep -rnE "system\(|popen\(" src apps` -> no hits.
+- SEC-G5 `grep -rnE 'std::system\(|\bsystem\(\s*"|popen\(|\bexec[lv]p?e?\(' src apps` -> no hits. (First form `system\(` also matched the ITCH writers' system-event methods.)
+- SEC-G1, G2, G5 run as scripts/security_gates.sh (CI job `gates`); G4 in the CI fuzz job; G3 is a runtime check, done at E4.5 (127.0.0.1 only).

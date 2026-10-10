@@ -83,8 +83,8 @@ Step template: do -> check. "Ask" = stop and ask the owner before continuing.
 
 ## E7 Hardening
 
-- [ ] E7.1 CI: alloc test, exec bench smoke, oms_fuzz 60 s.
-- [ ] E7.2 Security gates SEC-G1..G5.
+- [x] E7.1 CI: alloc test, exec bench smoke, oms_fuzz 60 s. ci.yml also runs on exec-layer pushes, fuzzes itch, tape and oms 60 s each (clean locally), and runs scripts/check_cli.sh.
+- [x] E7.2 Security gates SEC-G1..G5. scripts/security_gates.sh (job gates); G1 and G5 patterns refined (SECURITY.md), each still catches a planted hit.
 - [ ] E7.3 README/ROADMAP: measured numbers only; INDEX status -> done.
 - G7: CI green, gates clean.
 

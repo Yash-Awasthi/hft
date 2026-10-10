@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, exec-layer]
   pull_request:
 
 jobs:
@@ -27,6 +27,14 @@ jobs:
       - run: ctest --test-dir build/${{ matrix.preset }} --output-on-failure
       - if: matrix.preset == 'release'
         run: build/release/bench/hft_bench --benchmark_min_time=0.01s
+      - if: matrix.preset == 'release'
+        run: scripts/check_cli.sh build/release/apps
+
+  gates:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/security_gates.sh
 
   fuzz:
     runs-on: ubuntu-24.04
@@ -37,8 +45,9 @@ jobs:
           sudo git -C "$VCPKG_INSTALLATION_ROOT" fetch origin master
           sudo git -C "$VCPKG_INSTALLATION_ROOT" checkout -qf "$(jq -r '.["builtin-baseline"]' vcpkg.json)"
       - run: cmake --preset fuzz
-      - run: cmake --build build/fuzz --target itch_fuzz tape_fuzz
+      - run: cmake --build build/fuzz --target itch_fuzz tape_fuzz oms_fuzz
       - run: |
-          mkdir -p "$RUNNER_TEMP/corpus" "$RUNNER_TEMP/json"
-          build/fuzz/fuzz/itch_fuzz -max_total_time=30 "$RUNNER_TEMP/corpus"
+          mkdir -p "$RUNNER_TEMP/corpus" "$RUNNER_TEMP/json" "$RUNNER_TEMP/oms"
+          build/fuzz/fuzz/itch_fuzz -max_total_time=60 "$RUNNER_TEMP/corpus"
           build/fuzz/fuzz/tape_fuzz -max_total_time=60 "$RUNNER_TEMP/json"
+          build/fuzz/fuzz/oms_fuzz -max_total_time=60 "$RUNNER_TEMP/oms"
