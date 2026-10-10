@@ -23,6 +23,7 @@ Terse reference docs; ids are stable, cite them in commits and code comments whe
 | VENUE.md | exchange facts with sources, measured RTT and feed facts | F* |
 | REFS.md | references mapped to components | RF* |
 | HW.md | machine facts, measurement conditions | H* |
+| PERF.md | build and runtime measurements, what was adopted and why not | P*, R* |
 
 ## Conventions
 
