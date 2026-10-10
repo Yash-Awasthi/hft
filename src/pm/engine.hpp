@@ -69,14 +69,15 @@ class Engine {
         ++events_;
         switch (e.kind) {
             case Kind::Book: {
-                Tok& t = *toks_[token(e.asset)];
+                const std::uint32_t i = token(e.asset);
+                Tok& t = *toks_[i];
                 t.maker.book.clear();
                 for (const auto& l : e.bids) t.maker.book.set(true, l.px, l.size);
                 for (const auto& l : e.asks) t.maker.book.set(false, l.px, l.size);
                 if (e.tick > 0) t.maker.tick = e.tick;
                 t.seeded = true;
                 t.maker.on_snapshot(ns);
-                after(ns, token(e.asset));
+                after(ns, i);
                 break;
             }
             case Kind::PriceChange:

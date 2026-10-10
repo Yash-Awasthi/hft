@@ -70,6 +70,7 @@ class TokenBook {
         std::uint64_t bits[kWords] = {};
         std::uint64_t top[kTop] = {};
         std::uint32_t count = 0;
+        std::int32_t hi = -1, lo = -1;  // highest and lowest non-empty prices, kept on every put
 
         void put(std::int32_t px, double sz) {
             const int w = px >> 6;
@@ -79,11 +80,15 @@ class TokenBook {
                 bits[w] |= bit;
                 top[w >> 6] |= 1ull << (w & 63);
                 size[px] = sz;
+                if (px > hi) hi = px;
+                if (lo < 0 || px < lo) lo = px;
             } else if (bits[w] & bit) {
                 --count;
                 bits[w] &= ~bit;
                 if (!bits[w]) top[w >> 6] &= ~(1ull << (w & 63));
                 size[px] = 0;
+                if (px == hi) hi = at_or_below(px);
+                if (px == lo) lo = at_or_above(px);
             }
         }
         void clear() {
@@ -95,6 +100,7 @@ class TokenBook {
                 }
             for (auto& t : top) t = 0;
             count = 0;
+            hi = lo = -1;
         }
         // Highest non-empty price at or below px, -1 if none.
         std::int32_t at_or_below(std::int32_t px) const {
@@ -152,8 +158,8 @@ class TokenBook {
             }
             return d;
         }
-        std::int32_t highest() const { return count ? at_or_below(kMaxPx) : -1; }
-        std::int32_t lowest() const { return count ? at_or_above(0) : -1; }
+        std::int32_t highest() const { return hi; }
+        std::int32_t lowest() const { return lo; }
     };
 
     Side bids_, asks_;
