@@ -14,6 +14,8 @@
 #include <cstring>
 #include <exception>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -57,6 +59,35 @@ void stream_record_file(const std::filesystem::path& p, Chunk&& chunk) {
         }
     }
     if (last != 0) throw std::runtime_error("truncated frame: " + p.string());
+}
+
+// Compresses a finished hour file `<hour>.jsonl` to `<hour>.jsonl.zst` (or `<hour>_<k>.jsonl.zst`
+// when earlier files for the hour exist) and removes the raw file. Anything after the last newline
+// is dropped: a stop by a signal the recorder cannot catch, or a crash, can leave a torn line or a
+// zero-filled page there. False, with the raw file kept, if compression or the write fails.
+inline bool compress_record_file(const std::filesystem::path& raw) {
+    namespace fs = std::filesystem;
+    std::string data;
+    {
+        std::ifstream in(raw, std::ios::binary);
+        data.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    data.resize(data.find_last_of('\n') == std::string::npos ? 0 : data.find_last_of('\n') + 1);
+    if (data.empty()) return fs::remove(raw), true;
+    std::string out(ZSTD_compressBound(data.size()), '\0');
+    const std::size_t n = ZSTD_compress(out.data(), out.size(), data.data(), data.size(), 6);
+    if (ZSTD_isError(n)) return false;
+    fs::path dst = raw;
+    dst += ".zst";
+    for (int k = 1; fs::exists(dst); ++k)  // a restart inside an hour: keep every file, in order
+        dst = raw.parent_path() / (raw.stem().string() + "_" + std::to_string(k) + ".jsonl.zst");
+    {
+        std::ofstream o(dst, std::ios::binary | std::ios::trunc);
+        o.write(out.data(), static_cast<std::streamsize>(n));
+        if (!o) return fs::remove(dst), false;
+    }
+    fs::remove(raw);
+    return true;
 }
 
 namespace detail {

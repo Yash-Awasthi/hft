@@ -67,6 +67,29 @@ TEST(Recorder, StopsWritingAtTheCap) {
     EXPECT_TRUE(std::filesystem::is_empty(dir.path / "c0"));
 }
 
+TEST(RecordFile, CompressingDropsATornLastLineAndKeepsEarlierFiles) {
+    TempDir dir("pm_record_file");
+    const auto raw = dir.path / "20261009T21.jsonl";
+    {
+        std::ofstream o(raw, std::ios::binary);
+        o << "1 {\"a\":1}\n2 {\"b\":2}\n3 {\"c\":";
+        o << std::string(100, '\0');  // a crash can leave the tail of a page zero-filled
+    }
+    std::ofstream(dir.path / "20261009T21.jsonl.zst") << "earlier";
+    ASSERT_TRUE(compress_record_file(raw));
+    EXPECT_FALSE(std::filesystem::exists(raw));
+    ASSERT_TRUE(std::filesystem::exists(dir.path / "20261009T21_1.jsonl.zst"));
+    std::string text;
+    stream_record_file(dir.path / "20261009T21_1.jsonl.zst", [&](std::string_view d) { text += d; });
+    EXPECT_EQ(text, "1 {\"a\":1}\n2 {\"b\":2}\n");
+
+    const auto torn_only = dir.path / "20261009T22.jsonl";
+    std::ofstream(torn_only) << "4 {\"d\"";
+    ASSERT_TRUE(compress_record_file(torn_only));  // nothing complete: removed, no output
+    EXPECT_FALSE(std::filesystem::exists(torn_only));
+    EXPECT_FALSE(std::filesystem::exists(dir.path / "20261009T22.jsonl.zst"));
+}
+
 TEST(Recorder, StopsInsteadOfBlockingWhenItsRingIsFull) {
     TempDir dir("pm_recorder_full");
     const std::string text(1000, 'x');

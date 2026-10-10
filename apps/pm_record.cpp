@@ -9,8 +9,6 @@
 // is compressed with zstd when the hour ends. DIR/events.log records connects, drops and
 // gaps; DIR/markets.tsv maps token ids to markets. Recording stops at the size cap.
 
-#include <zstd.h>
-
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -31,6 +29,7 @@
 
 #include "net/tls.hpp"
 #include "pm/gamma.hpp"
+#include "pm/reader.hpp"
 
 namespace fs = std::filesystem;
 using hft::pm::kWsHost;
@@ -42,7 +41,8 @@ namespace {
 std::string utc(std::time_t t, const char* fmt) { return hft::pm::utc_time(t, fmt); }
 
 std::atomic<bool> g_stop{false};
-void on_signal(int) { g_stop = true; }
+std::atomic<int> g_signal{0};
+void on_signal(int sig) { g_signal = sig, g_stop = true; }
 
 std::int64_t now_ns() {
     timespec ts;
@@ -79,32 +79,6 @@ std::uintmax_t dir_bytes(const fs::path& d) {
     return n;
 }
 
-void compress_file(const fs::path& raw) {
-    std::ifstream in(raw, std::ios::binary);
-    const std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    in.close();
-    if (data.empty()) {
-        fs::remove(raw);
-        return;
-    }
-    std::string out(ZSTD_compressBound(data.size()), '\0');
-    const std::size_t n = ZSTD_compress(out.data(), out.size(), data.data(), data.size(), 6);
-    if (ZSTD_isError(n)) return;  // keep the raw file
-    // A restart inside an hour leaves an earlier file for the same hour; keep both, in order.
-    fs::path dst = raw;
-    dst += ".zst";
-    for (int k = 1; fs::exists(dst); ++k)
-        dst = raw.parent_path() / (raw.stem().string() + "_" + std::to_string(k) + ".jsonl.zst");
-    {
-        std::ofstream o(dst, std::ios::binary | std::ios::trunc);
-        o.write(out.data(), static_cast<std::streamsize>(n));
-        if (!o) {
-            fs::remove(dst);
-            return;
-        }
-    }
-    fs::remove(raw);
-}
 
 // Appends lines to the current hour's file and compresses it when the hour changes.
 class HourlyWriter {
@@ -131,7 +105,7 @@ class HourlyWriter {
     void rotate(const std::string& next) {
         if (f_.is_open()) {
             f_.close();
-            compress_file(path_);
+            hft::pm::compress_record_file(path_);
         }
         hour_ = next;
         if (next.empty()) return;
@@ -270,13 +244,14 @@ int main(int argc, char** argv) {
     }
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
+    std::signal(SIGHUP, SIG_IGN);  // closing the terminal or WSL session that started it is not a stop
     fs::create_directories(root);
     EventLog log(root / "events.log");
     const auto cap = static_cast<std::uintmax_t>(cap_gb * 1e9);
 
     // A crash can leave an uncompressed hour behind.
     for (const auto& e : fs::recursive_directory_iterator(root))
-        if (e.is_regular_file() && e.path().extension() == ".jsonl") compress_file(e.path());
+        if (e.is_regular_file() && e.path().extension() == ".jsonl") hft::pm::compress_record_file(e.path());
 
     std::atomic<bool> cap_hit{false};
     const auto t_start = std::chrono::steady_clock::now();
@@ -352,5 +327,6 @@ int main(int argc, char** argv) {
         stop_all();
         log.write("main", "exit msgs=" + std::to_string(m) + " bytes=" + std::to_string(b));
     }
-    return cap_hit ? 3 : 0;
+    // A stop signal exits with 128 plus the signal, which the supervisor treats as a stop.
+    return g_signal ? 128 + g_signal : cap_hit ? 3 : 0;
 }

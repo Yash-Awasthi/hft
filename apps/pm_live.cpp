@@ -637,6 +637,7 @@ int main(int argc, char** argv) {
     }
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
+    std::signal(SIGHUP, SIG_IGN);  // closing the session that started it is not a stop
     try {
         const int rc = o.replay.empty() ? live(o) : replay(o);
         return g_signal ? 128 + g_signal : rc;  // a stop request is not a crash to restart after

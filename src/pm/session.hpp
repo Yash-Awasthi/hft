@@ -4,8 +4,6 @@
 // connection and label) and arbitrage groups, so a replay sets the engine up the same way;
 // the recorder writes the records the trading thread processed, in its order.
 
-#include <zstd.h>
-
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -23,6 +21,7 @@
 #include "core/spsc.hpp"
 #include "pm/engine.hpp"
 #include "pm/gamma.hpp"
+#include "pm/reader.hpp"
 
 namespace hft::pm {
 
@@ -123,7 +122,7 @@ class Recorder {
         if (f_) {
             std::fclose(f_);
             f_ = nullptr;
-            compress(path_);
+            compress_record_file(path_);
         }
         hour_ = hour;
         if (hour < 0 || capped_) return;
@@ -141,19 +140,7 @@ class Recorder {
         if (!f_) throw std::runtime_error("cannot write " + path_.string());
         std::setvbuf(f_, nullptr, _IOFBF, 1 << 20);
     }
-    static void compress(const std::filesystem::path& p) {
-        std::ifstream in(p, std::ios::binary);
-        const std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-        std::string out(ZSTD_compressBound(data.size()), '\0');
-        const std::size_t n = ZSTD_compress(out.data(), out.size(), data.data(), data.size(), 6);
-        if (ZSTD_isError(n)) return;  // keep the raw file
-        std::filesystem::path dst = p;
-        dst += ".zst";
-        for (int k = 1; std::filesystem::exists(dst); ++k)  // the same hour reopened after a clock step
-            dst = p.parent_path() / (p.stem().string() + "_" + std::to_string(k) + ".jsonl.zst");
-        std::ofstream(dst, std::ios::binary).write(out.data(), static_cast<std::streamsize>(n));
-        std::filesystem::remove(p);
-    }
+
 
     std::filesystem::path dir_, path_;
     std::uintmax_t cap_;

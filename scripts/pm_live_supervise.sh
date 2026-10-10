@@ -3,6 +3,7 @@
 # Restarts after any exit except a deliberate stop (130, 143).
 # Usage: scripts/pm_live_supervise.sh <data-dir> [pm_live options]
 set -u
+trap '' HUP  # survive the session that started it
 dir=${1:?data dir}
 shift
 bin=${PM_LIVE_BIN:-"$(cd "$(dirname "$0")/.." && pwd)/build/native/apps/pm_live"}

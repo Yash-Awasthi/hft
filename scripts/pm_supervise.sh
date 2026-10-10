@@ -2,6 +2,7 @@
 # Keeps pm_record running: restarts it after any exit except the size cap (exit 3) or a
 # deliberate stop. Usage: scripts/pm_supervise.sh <data-dir> [pm_record options]
 set -u
+trap '' HUP  # survive the session that started it
 dir=${1:?data dir}
 shift
 bin=${PM_RECORD_BIN:-"$(cd "$(dirname "$0")/.." && pwd)/build/release/apps/pm_record"}
