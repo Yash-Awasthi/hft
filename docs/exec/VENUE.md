@@ -51,6 +51,12 @@ Status per fact: V = verified from docs; M = measured here; U = uncertain or con
 - F29 M Feed: receive_ns - exchange `timestamp` on 276,896 messages: p1 -216 ms, p50 -153 ms, p90 +2.68 s, p99 +9.8 s. Local clock synced (chrony stratum 1, PHC0). Exchange timestamps are not comparable with local time (negative median) and snapshots carry old timestamps: never use them for latency or ordering.
 - F30 M Event counts in all recordings (pm 278 MB + pm-live 176 MB): price_change 4.44M, best_bid_ask 269k, book 95k, new_market 51k, last_trade_price 46.6k, market_resolved 28, tick_size_change 24, _reconnect 9.
 
+- F31 M Arb baseline, `pm_arb ~/data/pm-live` (4 runs, ~11 h, 2026-10-09..10; windows >= 1 ms): 298 windows, 11 groups.
+  asks<1: n 261, duration p50 244 ms / p90 33 s, max edge p50 0.0040 / p90 0.0140 / max 0.0710, size at max p50 7.2 / p90 14.8 shares.
+  bids>1: n 37, duration p50 1.0 s / p90 32 s, max edge p50 0.0020 / p90 0.0300, size p50 5.2 / p90 50 shares.
+  At RF2's threshold (edge >= 0.02, lasting >= 1 s): 17 windows, ~10 USD gross total at displayed size, before fees and latency.
+  -> depth, not capital, bounds results (D3 caps never bind); E6 should report this honestly; more recording days raise counts, not per-window size.
+
 ## Consequences for the design (applied in DECISIONS D16-D20)
 
 - Settlement can fail after a match (F15) -> ledger separates matched from confirmed; a settlement-failure fault is core.

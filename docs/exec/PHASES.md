@@ -52,6 +52,7 @@ Step template: do -> check. "Ask" = stop and ask the owner before continuing.
 - [ ] E4.3 Decision hash v2 (A4.2); same seed twice -> same hash; different seed with faults -> different hash.
 - [ ] E4.4 Paper mode on live feed with inline SimVenue (reuse pm_live feed/ring/recorder).
 - [ ] E4.5 Metrics A5 through existing hand-off; kill via SIGUSR1 and KILL file (D11, D13); SEC3 check.
+- [ ] E4.5b Known bug: `pm_arb --help` (any unknown argument) throws filesystem_error uncaught; make all apps reject unknown flags with usage and exit 2.
 - [ ] E4.6 Ask: retire pm_live in favour of pm_exec, or keep both? Default: keep both until E7.
 - G4: replay determinism; 1 h paper run: zero illegal transitions, zero reconcile mismatch; TSan 5 min paper run clean.
 
