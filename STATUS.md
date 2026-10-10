@@ -9,9 +9,10 @@ README "Performance"; the research-phase log is in
 - Recorder (`pm_record`), started by the Windows logon task: 32 markets (64 tokens), hourly
   zstd files in `~/data/pm`, 50 GB cap, health in `status.json`.
 - `pm_live` under `scripts/pm_live_supervise.sh ~/data/pm-live --record-cap-gb 20 --port 8088
-  --seconds 21600`, started by the same logon task as the recorder
-  (`C:\Users\Yash\hft\pm_start.ps1`; the previous version is `pm_start.ps1.bak`). A lock
-  file keeps it to one supervisor. Dashboard at http://127.0.0.1:8088/. To stop it, kill the
+  --seconds 21600`, started by the same logon task as the recorder:
+  `C:\Users\Yash\hft\pm_start.ps1` hands off to `pm_start.vbs`, which starts WSL with no
+  window (earlier versions: `pm_start.ps1.bak`, `.bak2`). Lock files keep each supervisor
+  to one copy; the recorder's console output goes to `~/data/pm/console.log`. Dashboard at http://127.0.0.1:8088/. To stop it, kill the
   supervisor first, then `pm_live`.
 
 ## Open
