@@ -18,9 +18,9 @@ Step template: do -> check. "Ask" = stop and ask the owner before continuing.
 ## E1 Types, ledger, risk
 
 - [x] E1.0 (see commit) Session file gains market category, neg_risk, min_order_size, tick (from Gamma/book) for D18, F8; recorded sessions without them get defaults (category Other, min 5, tick from book).
-- [ ] E1.1 `.gitignore` secret patterns (SEC7).
-- [ ] E1.2 src/exec/types.hpp (T1..T7) + static_asserts.
-- [ ] E1.3 Ledger tests first (L2 identity property, L4 settlement, L3 capital-days), then src/exec/ledger.hpp.
+- [x] E1.1 (7c5aab7) `.gitignore` secret patterns (SEC7).
+- [x] E1.2 (4e8012d) src/exec/types.hpp (T1..T7) + static_asserts.
+- [x] E1.3 Ledger tests first (L2 identity property, L4 settlement, L3 capital-days), then src/exec/ledger.hpp.
 - [ ] E1.4 Risk tests first: each R1..R8 boundary (limit pass, limit+1 step reject); token bucket refill; R9..R15 triggers; R16 trip blocks and cancels; then src/exec/risk.hpp.
 - [ ] E1.5 Bench: pre-trade check p99 (R17 <= 50 ns).
 - G1: tests pass all presets; bench within budget; mutation check (plant: R5 ignores open orders; R16 does not block) both caught.

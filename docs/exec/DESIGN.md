@@ -70,6 +70,8 @@ Post-trade / 100 ms tick:
 - L2 Identity after every fill and mark: total = realised + unrealised + fees (exact int).
 - L3 Capital: locked_in_orders, locked_in_positions; capital_days += locked * dt each tick.
 - L4 Resolution: settle each token at 0 or 10000; sets settle at 10000 per set.
+- L7 Long only: the venue sells only shares held; risk rejects a sell above available position (pos - reserved). A negative position can only come from a failed settlement of shares already sold: counted as a deficit -> R14 kill.
+- L8 Identity is cash - capital + cost == realised - fees (exact). It holds for any cost-removal rule, so cost basis correctness is covered by worked examples, not by the identity.
 - L5 Overflow guard: static_assert / debug check on max notional (D5 headroom).
 
 ## V SimVenue (src/exec/sim_venue.hpp)
