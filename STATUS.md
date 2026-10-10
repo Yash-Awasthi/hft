@@ -2,7 +2,7 @@
 
 Open work for [docs/ROADMAP.md](docs/ROADMAP.md). Finished work is in the git history and in
 README "Performance"; the research-phase log is in
-[archive/docs/STATUS-research.md](archive/docs/STATUS-research.md).
+[STATUS-research.md](https://github.com/Yash-Awasthi/hft/blob/research-archive/archive/docs/STATUS-research.md) at the research-archive tag.
 
 ## Running
 

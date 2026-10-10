@@ -11,7 +11,7 @@ A low-latency trading system in C++23 with no framework underneath. It has two f
 
 Plan and phases: [docs/ROADMAP.md](docs/ROADMAP.md); working log: [STATUS.md](STATUS.md).
 Studies from the earlier research phase (Python, signal and regime reports, transformer
-forecaster, pre-registration) are kept out of the build under [archive/](archive/).
+forecaster, pre-registration) are kept at the [research-archive](https://github.com/Yash-Awasthi/hft/blob/research-archive/archive/) tag.
 
 ## Architecture
 
@@ -64,7 +64,7 @@ Targets were revised once, after the baseline and one optimisation pass. The ori
 targets were set from runs with turbo on (about 4.7 GHz); the baseline fixes the clock at
 about 2.4 GHz so before/after comparisons are stable, which roughly doubles every time figure
 for the same cycles. Old and new targets with the reason for each are in the revision record,
-[archive/docs/DESIGN.md section 9](archive/docs/DESIGN.md#target-revisions).
+[DESIGN.md section 9](https://github.com/Yash-Awasthi/hft/blob/research-archive/archive/docs/DESIGN.md#target-revisions) (research-archive tag).
 
 | Path | Target | Baseline | Now | Cycles (now) | Source |
 |---|---|---|---|---|---|

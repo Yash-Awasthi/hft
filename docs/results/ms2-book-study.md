@@ -10,7 +10,7 @@ symbols plus GOOGL.
 
 ## Caveats
 
-- Wall-clock figures are the baseline of archive/docs/DESIGN.md section 9: laptop on mains, idle,
+- Wall-clock figures are the baseline of DESIGN.md (research-archive tag) section 9: laptop on mains, idle,
   maximum processor state 99% for every core class and boost mode off in the Windows power
   plan (turbo off; a chain of dependent multiplies runs at about 2.4 GHz on every virtual CPU
   tried, against 4.7 GHz before). Timed runs pinned with `taskset` (one virtual CPU; two for

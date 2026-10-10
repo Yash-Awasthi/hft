@@ -181,7 +181,7 @@ struct AvellanedaStoikov {
 
 namespace hft::backtest {
 
-// Serves a quoting policy solved offline by archive/research/run_dp.py: one table lookup per decision
+// Serves a quoting policy solved offline by archive/research/run_dp.py (research-archive tag): one table lookup per decision
 // (DESIGN.md section 3). State: inventory in lots, queue bucket of our bid and ask (from the
 // shares ahead of our orders in the strategy's own feed), imbalance, spread and signal buckets.
 struct DpPolicy {
@@ -221,7 +221,7 @@ struct DpPolicy {
         return b;
     }
 
-    // Matches archive/research/dp.py: front at one lot or a third of the level ahead, then thirds.
+    // Matches archive/research/dp.py (research-archive tag): front at one lot or a third of the level ahead, then thirds.
     static int queue(const Working* w) {
         if (!w) return 0;
         const double rho = w->level > 0 ? w->ahead / w->level : 0;

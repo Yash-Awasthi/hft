@@ -14,7 +14,7 @@ cycle counts come from Cachegrind and `rdtscp`.
 
 ## P1. Debloat (done)
 
-- Research code, the experiment registry, the transformer and study apps moved to `archive/`.
+- Research code, the experiment registry, the transformer and study apps moved to `archive/`, then out of the tree to the `research-archive` tag.
 - Removed from the build: tlx, toml++, SQLite, nanobind, the Python CI job.
 
 ## P2. Build for the machine (done)
