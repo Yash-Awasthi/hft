@@ -6,15 +6,16 @@ Step template: do -> check. "Ask" = stop and ask the owner before continuing.
 ## E0 Facts and inspection (no product code)
 
 - [ ] E0.1 Create branch `exec-layer` from `phase1-hotpath`. Save `pm_stats ~/data/pm` to `~/data/ref/pm_stats.tsv`; confirm baseline hash (INDEX).
-- [ ] E0.2 Read in full: engine/scheduler.hpp, backtest/risk.hpp, backtest/accounting.hpp, engine/matching.hpp, pm/maker.hpp, pm/engine.hpp, pm/arb.hpp, core/pool.hpp, book/id_map.hpp. Confirm or amend D8 (reuse map).
-- [ ] E0.3 Answer Q3..Q10 from the exchange's current public API docs; write `docs/exec/VENUE.md` (fact, source URL, date read). Fix D5 units.
-- [ ] E0.4 Measure RTT to the exchange API host: 20 TCP connects, median/p90 (Q11). Record in VENUE.md.
-- [ ] E0.5 Check recorded data for: tick_size_change events, market close/resolution events, min order size hints. Record counts in VENUE.md.
+- [x] E0.2 (2026-10-10, docs only) Read in full: engine/scheduler.hpp, backtest/risk.hpp, backtest/accounting.hpp, engine/matching.hpp, pm/maker.hpp, pm/engine.hpp, pm/arb.hpp, core/pool.hpp, book/id_map.hpp. Confirm or amend D8 (reuse map).
+- [x] E0.3 (2026-10-10) Answer Q3..Q10 from the exchange's current public API docs; write `docs/exec/VENUE.md` (fact, source URL, date read). Fix D5 units.
+- [x] E0.4 (2026-10-10) Measure RTT to the exchange API host: 20 TCP connects, median/p90 (Q11). Record in VENUE.md.
+- [x] E0.5 (2026-10-10) Check recorded data for: tick_size_change events, market close/resolution events, min order size hints. Record counts in VENUE.md.
 - Ask if any fact contradicts DESIGN (e.g. fills not attributable to orders, no complete-set payout).
 - G0: VENUE.md complete with dates; D5 and D8 final; DECISIONS updated.
 
 ## E1 Types, ledger, risk
 
+- [ ] E1.0 Session file gains market category, neg_risk, min_order_size, tick (from Gamma/book) for D18, F8; recorded sessions without them get defaults (category Other, min 5, tick from book).
 - [ ] E1.1 `.gitignore` secret patterns (SEC7).
 - [ ] E1.2 src/exec/types.hpp (T1..T7) + static_asserts.
 - [ ] E1.3 Ledger tests first (L2 identity property, L4 settlement, L3 capital-days), then src/exec/ledger.hpp.
@@ -37,7 +38,8 @@ Step template: do -> check. "Ask" = stop and ask the owner before continuing.
 
 - [ ] E3.1 Matching V1..V7 with unit tests on constructed books (taker walk, overlay clear, maker ahead, Fok/Fak/Gtc, fees, rule rejects).
 - [ ] E3.2 Invariants V15..V17 as always-on checks in tests and debug builds.
-- [ ] E3.3 Faults (D14): core V9, V10, V11, V14 with Philox, each forced on in a test; V8, V12, V13 optional.
+- [ ] E3.3 Faults (D14, D16): core V18, V9, V10, V11, V14 with Philox, each forced on in a test; V8, V12, V13 optional.
+- [ ] E3.3b Venue rules from VENUE.md: F6 rounding, F8 min size, F10 sports delay, F12 modes, D18 fees, D19 batches, L6 merge/split; one test each.
 - [ ] E3.4 Parity G3b prep: run maker on reference recording, old path, dump fills (ns, token, px, qty) to file.
 - [ ] E3.5 Maker quotes become intents (A2.7); fills via SimVenue with latency 0, faults off; compare dump: must be identical.
 - Ask if parity is not exact after one day of investigation (stop condition).

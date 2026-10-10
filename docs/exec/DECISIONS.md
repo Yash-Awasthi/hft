@@ -10,32 +10,41 @@ Format: id, decision, why. Change a decision only by adding a new id that supers
   capital 1,000,000 USD; per-attempt loss bound 1,000 USD (0.1%); daily loss stop 20,000 USD (2%);
   per-market position cap 50,000 USD notional (5%); gross exposure cap 500,000 USD (50%);
   per-event-group cap 100,000 USD (10%). All config values, not constants. Why: owner answer, mapped to common desk ratios. Revisit if owner disagrees (Q1).
-- D4 Latency settings in the report: measured RTT (E0.4) plus 50, 150, 300 ms one-way-equivalent. Why: owner answer.
-- D5 Units for Qty and Usd: TBD at E0.3 from venue size precision. Candidates: Qty = 1e-6 share, Usd = micro-dollar (1e-6), Px = 1e-4. Must make price*qty exact in int64 with headroom: 10000 * qty_units * max_qty < 9.2e18.
+- D4 Latency settings in the report: measured RTT 182 ms (VENUE F28: request round trip, median) plus 50, 150, 300 ms. Model: order-entry one-way = RTT/2 each direction; sports markets add the 1 s matching delay (F10). Why: owner answer.
+- D5 Units (final): Px = 1e-4 USD (int32, 0..10000; covers ticks 0.0001..0.1 incl. 0.0025/0.005, F7). Qty = 1e-6 share (int64; book sizes carry up to 6 dp, orders 2 dp, F5/F6). Usd = 1e-10 USD (int64), so Px*Qty is exact with no rounding: max representable 9.2e8 USD, capital 1e6 USD uses 1e16. Exchange-side amounts (6 dp USDC) and fees (5 dp, F17) are produced by the F6/F17 rounding rules and are exact in Usd units. Accumulators that can exceed 9.2e8 USD (lifetime traded notional) use __int128 or are kept in shares. Why: one exact unit, no rounding inside the ledger.
 - D6 No Venue interface/abstraction: SimVenue is the only venue (D1). Called directly. Why: one implementation, no indirection.
 - D7 SimVenue runs inline on the trading thread, scheduled by `engine::EventQueue` (existing; kinds Market < MarketData < OrderArrival < Report at equal time). Why: deterministic, conservative tie-break, already tested.
-- D8 Reuse map (confirm at E0.2): `engine/scheduler.hpp` as is; `backtest/risk.hpp` and `backtest/accounting.hpp` ideas, re-typed for Px/Qty/Usd (they are ITCH-typed: uint32 price, book::Side); `core/philox.hpp` for fault draws; `core/pool.hpp` + `book/id_map.hpp` LinearMap for order table; `core/histogram.hpp` for latency metrics; pm_live metrics hand-off (`Metrics::offer/fold`) for new metrics.
+- D8 Reuse map (final, E0.2 read in full): `engine/scheduler.hpp` as is (uint64 time works for epoch ns; reserve capacity up front, growth allocates); `backtest/risk.hpp` and `backtest/accounting.hpp`: ideas only, not code (single symbol; risk uses double mid/tokens and uint32 price; accounting keeps a std::deque that allocates; identity pattern and token bucket copied); `core/philox.hpp` for fault draws; `core/pool.hpp` + `book/id_map.hpp` LinearMap for order table; `core/histogram.hpp` for latency metrics; pm_live metrics hand-off (`Metrics::offer/fold`) for new metrics.
 - D9 (superseded by D12)
-- D10 Sell-side arb windows (bids sum > 1) are reported, not executed. Why: needs minting full sets on the conditional-token contract, unmodelled.
+- D10 Event-level (neg-risk, more than 2 markets) sell-side windows are reported, not executed. Pair-level: see D17. Why: event-level selling needs split in every market plus conversion; unmodelled.
 - D11 Kill switch reset is never automatic. Trip via: any risk rule, SIGUSR1, or file `<run_dir>/KILL` (D13: no HTTP trigger). Reset: restart with `--reset-kill` after reading the kill log. Why: tripping is the safe direction; reset needs a human.
 - D12 Engineering project, not research. Success = correctness (oracles, invariants), determinism (hash), latency budgets met, faults handled, runnable demos. Arb/maker PnL is system output, reported as measured; thresholds are plain config, no tune/evaluate split. Why: owner 2026-10-10.
 - D13 No new web surface: HTTP stays read-only metrics + existing dashboard, frozen. No `POST` endpoints. Why: focus (owner).
 - D14 Faults: core four required (V9 drop ack, V10 drop fill, V11 duplicate, V14 disconnect); V8, V12, V13 optional, only if time allows. Why: the four cover every OMS recovery path.
 - D15 ITCH side frozen: no further work on ITCH replay/book/backtest beyond keeping tests green. Why: focus on the execution layer.
+- D16 Settlement modelled: a fill is Matched, then Confirmed or Failed (F15). Ledger keeps matched and confirmed positions separately; risk uses matched (worst case); a Failed trade reverses its fill. Settlement failure is a core fault (V18), making five core faults with D14. Why: real venue behaviour; changes OMS and ledger.
+- D17 Yes/No pair windows: buy side (Yes ask + No ask < 1) executes and then merges 1 Yes + 1 No -> 1 USD at once (F23), so capital is not locked to resolution; sell side (Yes bid + No bid > 1) executes by split 1 USD -> Yes + No, then sells both. Merge/split are ledger operations with a configurable latency (relayer) and zero fee (U, F23). Why: F23 makes pair windows complete trades.
+- D18 Fees: taker only, fee = C * rate * p * (1 - p), rate by market category (F17/F18), rounded to 5 dp; makers pay nothing; rebates not modelled. Session file gains each market's category (from Gamma tags). Formula variant with exponent (F19) is a config switch, off by default.
+- D19 Batch limit 15 orders (F11): event-level arb with n legs sends ceil(n/15) batches back to back; policy P skew measured.
+- D20 Exchange timestamps are never used for latency or ordering (F29); only local receive time.
 
 ## Open (owner)
 
 - Q1 D3 mapping OK? (capital 1M, 0.1% per attempt, 2% daily). Default: proceed with D3.
 - Q2 Deadline for the project? Decides whether E6 demos and E7 fit fully. Default: plan as written, cut optional items first.
 
-## Open (resolve in E0, record answer here)
+## Resolved in E0 (2026-10-10, details in VENUE.md)
 
-- Q3 Venue order types / TIF set (GTC, FOK, FAK, GTD?).
-- Q4 Tick sizes per market, how a tick change is announced on the market channel.
-- Q5 Minimum order size, size precision (-> D5).
-- Q6 Maker/taker fees, how charged (per fill, on notional or shares).
-- Q7 Order and cancel rate limits.
-- Q8 Fill reporting: can a fill precede the ack; fill ids for dedup.
-- Q9 Multi-outcome ("negative risk") events: position conversion rules; does a complete Yes set pay exactly 1.
-- Q10 Resolution: how and when payout happens; market close signal on the feed.
-- Q11 RTT laptop -> exchange API host (20 TCP connects, median and p90).
+- Q3 GTC, GTD, FOK, FAK; post-only on GTC/GTD (F1-F3).
+- Q4 Ticks 0.1/0.01/0.001/0.0001; `tick_size_change` event on the market channel (F7, F26).
+- Q5 Per-market `min_order_size` (shares assumed), size 2 dp, amounts 6 dp (F5-F8).
+- Q6 Taker-only p(1-p) fee by category, 5 dp (F17-F19).
+- Q7 Per-signer windows, POST /order 5000/10 s (F21).
+- Q8 Trade ids exist; fill-before-ack not stated, kept possible (F16).
+- Q9 Neg-risk NO -> YES in every other market; pair backed by 1 pUSD; merge/split (F22-F24).
+- Q10 UMA oracle, 2 h challenge; `market_resolved` event carries winner (F25, F26).
+- Q11 RTT 182 ms median request, 67 ms TCP to edge (F27, F28).
+
+## Open (owner)
+
+- Q4b Which "Anatomy of Polymarket" paper was meant (REFS: RF4 Tsang & Yang, or Dubach)?

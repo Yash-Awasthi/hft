@@ -6,7 +6,7 @@
 - T2 `Side {Buy, Sell}`; `Tif {Gtc, Fok, Fak}` (confirm Q3).
 - T3 `OrderIntent {token u32, side, px, qty, tif, strategy u16, tag u32}`.
 - T4 `VenueReq {kind New|Cancel, cl_id u64, token, side, px, qty, tif}`.
-- T5 `VenueRpt {kind Ack|Reject|Fill|CancelAck|CancelReject|Expired|Status, cl_id, venue_id u64, fill_id u64, px, qty, fee Usd, reason u16, venue_ns}`.
+- T5 `VenueRpt {kind Ack|Reject|Fill|CancelAck|CancelReject|Expired|Status|Settled|SettleFailed, cl_id, venue_id u64, fill_id u64, px, qty, fee Usd, reason u16, venue_ns}`. Ack carries the venue status (live, matched, delayed, unmatched; F9, F10).
 - T6 `cl_id = session(16) << 48 | seq(48)`; session persisted in `~/data/exec/session.counter`, incremented per run; never reused.
 - T7 All structs trivially copyable, fixed size; static_assert sizes.
 
@@ -31,6 +31,7 @@ States: PendingNew, Live, Partial, PendingCancel, Filled, Cancelled, Rejected, E
 | S13 | any | overfill, report for terminal order (not dup), unknown cl_id | unchanged | illegal++, log, kill |
 | S14 | any | duplicate fill_id | unchanged | dup++, ignore |
 
+- S18 Settlement (D16): each fill is Matched on arrival; Settled -> confirmed; SettleFailed -> fill reversed (cum and position decrease, order may return to Live/Partial if still on book, else stays terminal with reduced cum). Order state machine is unchanged; settlement is per fill, tracked in the ledger.
 - S15 Fill application is by quantity, idempotent by fill_id (small per-order ring of recent fill ids, size 8; overflow -> linear check against ledger fills for that order).
 - S16 Transition table is constexpr data; one function applies it; O(1), no alloc.
 - S17 Budget: transition <= 50 ns p99 (bench).
@@ -45,7 +46,7 @@ Pre-trade, order (cheapest first; first failure returns its reason):
 - R4 self-cross: no buy >= own resting sell on same token, no sell <= own resting buy.
 - R5 position incl. open orders, worst side: per token qty cap; per market notional cap (D3); per group cap (D3); gross cap (D3).
 - R6 cash: reserved buys + this order notional + fees <= available cash.
-- R7 token buckets: order rate and cancel rate, per token and global, at <= 80% of venue limit (Q7).
+- R7 token buckets: order rate and cancel rate, global, at <= 80% of F21 (POST /order 5000/10 s burst, 48000/10 min sustained: two buckets each).
 - R8 open orders per token <= N_tok, global <= N_all.
 - Cancels: R1 (kill does not block cancels), R7 cancel bucket only.
 
@@ -64,7 +65,8 @@ Post-trade / 100 ms tick:
 
 ## L Ledger (src/exec/ledger.hpp)
 
-- L1 Per token: pos Qty, cost Usd, realised Usd, fees Usd. Per group: complete sets held (min over legs of pos).
+- L1 Per token: matched pos, confirmed pos (Qty), cost Usd, realised Usd, fees Usd. Per group: complete sets held (min over legs of pos). Cash: available, reserved (open buys), pending settlement.
+- L6 Merge/split (D17): merge n Yes + n No -> n * 10000 Px-units of cash; split the reverse; both after a configurable latency, zero fee.
 - L2 Identity after every fill and mark: total = realised + unrealised + fees (exact int).
 - L3 Capital: locked_in_orders, locked_in_positions; capital_days += locked * dt each tick.
 - L4 Resolution: settle each token at 0 or 10000; sets settle at 10000 per set.
@@ -78,13 +80,14 @@ Matching:
 - V2 Taker: on arrival, walk displayed levels at arrival time; fill at each level price up to displayed - overlay[level]. overlay[level] += taken; cleared when a market update for that level arrives.
 - V3 Maker: rest at px; ahead = displayed size at arrival (0 if px improves best). Trade at px reduces ahead, then fills; trade through px fills all remaining; level shrink below ahead -> ahead = level size. Cancels ahead not credited. (Same as pm/maker.hpp today; G3b parity.)
 - V4 Tif: Fok all-or-none at arrival; Fak fill available, cancel rest (Expired report); Gtc rests.
-- V5 Fees per Q6 on each fill.
-- V6 Rule rejects: off-tick, below min, closed/resolved market, paper cash insufficient, px out of bounds.
+- V5 Fees (D18): taker fills only, fee = qty * rate * p * (1 - p), rounded to 1e-5 USD; rate by market category; maker fills zero.
+- V6 Rule rejects: off-tick, size not 2 dp or below min_order_size (F6, F8), closed/resolved market, cancel-only/closed-only mode (F12), paper cash insufficient, px out of bounds; amounts rounded per F6.
+- V6b Matching delay: marketable orders in sports markets wait 1 s (F10) before matching; unmatched remainder rests (GTC/GTD) or is cancelled (FAK/FOK).
 - V7 Market events: tick change -> reject resting orders off new grid (or cancel all on token, per Q4); close/resolve -> cancel all, settle.
 
 Faults (each config prob or schedule; Philox, seed in exec.cfg):
 
-- Core (D14): V9 drop ack; V10 drop fill report (fill happened; found at reconcile); V11 duplicate report; V14 disconnect T s (reports after reconnect in order, or lost -> reconcile).
+- Core (D14, D16): V18 settlement failure (a matched fill later fails, configurable probability and delay); V9 drop ack; V10 drop fill report (fill happened; found at reconcile); V11 duplicate report; V14 disconnect T s (reports after reconnect in order, or lost -> reconcile).
 - Optional: V8 spurious reject; V12 reorder (cancel ack before earlier fill); V13 delay > OMS timeout.
 
 Invariants (checked every event; abort in tests):
@@ -97,7 +100,7 @@ Limits (print in every report): L2 has no order ids (queue estimated); others do
 
 ## X Arb executor (src/exec/arb_exec.hpp)
 
-- X1 Trigger: scanner window, buy side only (D10).
+- X1 Trigger: scanner window. Pair groups: buy and sell side (D17). Event groups: buy side only (D10).
 - X2 Filters (all must pass; count each rejection by filter): window age >= A_min ms; every leg book updated within S_fresh ms; no leg token frozen; net edge >= E_min.
 - X3 Net edge = gross - sum taker fees - legs * slip_ticks - latency allowance (config, ticks; D12).
 - X4 Size = floor_step(min(thinnest leg displayed, group cap D3, cash / set cost)); skip if < venue min.
@@ -106,3 +109,5 @@ Limits (print in every report): L2 has no order ids (queue estimated); others do
 - X7 Incomplete set: complete_cost = buy missing legs at asks walking depth; unwind_cost = sell filled legs at bids walking depth. Choose cheaper if loss <= attempt bound (R10); else hold, freeze group, alert; R15 bounds hold time.
 - X8 Log per attempt: window id, policy, legs filled, cause (fault id or market), action, cost, net PnL, capital-days.
 - X9 One attempt per group at a time; no new attempt while a group has residual exposure.
+- X10 Pair completion: buy side merges the set (L6) when both legs are confirmed or matched per config; sell side splits first (L6) then sells both legs; a failed sell leg leaves inventory to unwind (X7).
+- X11 Batches: event legs in batches of 15 (D19); policy P sends batches back to back.

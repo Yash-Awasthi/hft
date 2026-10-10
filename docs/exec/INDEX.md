@@ -5,7 +5,7 @@ Terse reference docs; ids are stable, cite them in commits and code comments whe
 
 ## Status
 
-- Current: not started. Next step: `E0.1` (PHASES.md).
+- Current: E0.2-E0.5 done (docs: VENUE.md, REFS.md, D5/D8/D16-D20). Next step: `E0.1` (branch + reference copies), then G0 check, then E1.
 - Branch: `exec-layer`, created from `phase1-hotpath` at E0 start.
 - Baseline hashes (must stay equal unless a step says otherwise):
   - `pm_live --replay ~/data/pm-live/20261009T160027Z` -> `decision_hash 6facf575ad8d84bc`
@@ -20,10 +20,12 @@ Terse reference docs; ids are stable, cite them in commits and code comments whe
 | ARCH.md | modules, threads, data flow, record format, file map | A* |
 | DESIGN.md | types, state machine, risk checks, ledger, sim model, arb algorithm | T*, S*, R*, L*, V*, X* |
 | SECURITY.md | trust boundaries, rules, grep gates | SEC* |
+| VENUE.md | exchange facts with sources, measured RTT and feed facts | F* |
+| REFS.md | references mapped to components | RF* |
 
 ## Conventions
 
-- Units: Px int32 1e-4 (0..10000). Qty and Usd units fixed at E0 (D5). No double outside the maker model.
+- Units (D5): Px int32 1e-4 USD; Qty int64 1e-6 share; Usd int64 1e-10 USD (Px*Qty exact). No double outside the maker model.
 - Hot path rule: no alloc, lock, syscall, file I/O on the trading thread in steady state.
 - Every step: inspect -> failing test -> code -> test -> measure if perf-relevant -> commit.
 - Commit message: normal prose subject+body, max 3 lines, no attribution lines.
