@@ -68,8 +68,8 @@ cycle counts come from Cachegrind and `rdtscp`.
 - ITCH: table lookup for message lengths, cheaper empty-overflow checks in the book's best
   price, batch-timed throughput next to the per-event figures.
 - Build: system zstd, LZ4, zlib-ng and OpenSSL instead of vcpkg; benchmarks on `rdtsc`.
-- Order manager and gateway in dry-run against a simulated venue: order state machine,
-  idempotent client ids, rate limits, kill switch, position reconciliation.
+- Execution layer (no live orders): docs/exec/INDEX.md. Order state machine,
+  idempotent client ids, risk, kill switch, simulated venue with faults, arbitrage executor.
 - Let `pm_live --record` run for days next to the recorder, then report arbitrage windows
   (count, duration, edge, size) and maker fills per event.
 - Bare-Linux run for hardware counters and futex wake latency without a hypervisor.
