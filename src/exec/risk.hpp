@@ -111,7 +111,9 @@ class Risk {
         : l_(l),
           order_(l.order_burst, l.order_rate_per_s),
           sustained_(l.sustained_burst, l.sustained_rate_per_s),
-          cancel_(l.cancel_burst, l.cancel_rate_per_s) {}
+          cancel_(l.cancel_burst, l.cancel_rate_per_s) {
+        rejects_.reserve(l.reject_spike + 1);
+    }
 
     void ensure(std::uint32_t tokens) {
         if (tokens > group_of_.size()) group_of_.resize(tokens, 0);
@@ -135,6 +137,7 @@ class Risk {
         if (lg.deficits()) kill(KillReason::Deficit, now);
     }
     void on_venue_reject(Ns now) {
+        if (killed()) return;  // keeps rejects_ within its reserved size
         rejects_.push_back(now);
         while (!rejects_.empty() && rejects_.front() <= now - l_.reject_window) rejects_.erase(rejects_.begin());
         if (rejects_.size() > l_.reject_spike) kill(KillReason::RejectSpike, now);

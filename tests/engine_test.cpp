@@ -182,3 +182,32 @@ TEST(Engine, VenueMakerAsksOnlyUpToHeldShares) {
     EXPECT_EQ(e.ledger().available_pos(a), 5'000);  // 30.50 offered: sizes have 2 dp
     EXPECT_EQ(e.oms().open_orders(), 2u);
 }
+
+TEST(Engine, VenueRejectSpikeTripsTheKillSwitch) {
+    auto p = params();
+    p.venue = true;
+    p.sim.lat_in = p.sim.lat_out = 10'000'000;
+    p.risk.reject_spike = 0;
+    Engine e(p);
+    // Our bid at 0.48 is in flight when the ask comes down to 0.48: post-only, so the venue rejects it.
+    feed(e, {{kS, book("A", "0.48", "0.52")}, {kS + 1'000'000, change("A", "SELL", "0.48", "100")},
+             {kS + 200'000'000, control("_heartbeat", 0)}});
+    EXPECT_EQ(e.venue_stats().rejects, 1u);
+    EXPECT_EQ(e.exec_risk().kill_reason(), hft::exec::KillReason::RejectSpike);
+}
+
+TEST(Engine, VenueLossBeyondTheDailyStopTripsTheKillSwitch) {
+    auto p = params();
+    p.venue = true;
+    p.risk.daily_stop = 10 * hft::exec::kDollar;
+    Engine e(p);
+    feed(e, {{kS, book("A", "0.48", "0.52")}, {kS + 1, trade("A", "SELL", "0.48", "600")}});  // we buy 100 at 0.48
+    ASSERT_EQ(e.ledger().pos(e.token("A")), 100'000'000);
+    feed(e, {{2 * kS, change("A", "BUY", "0.48", "0")}, {2 * kS, change("A", "BUY", "0.40", "500")},
+             {3 * kS, control("_heartbeat", 0)}});
+    EXPECT_FALSE(e.exec_risk().killed());  // marked at the 0.40 bid: 8 USD down
+    feed(e, {{4 * kS, change("A", "BUY", "0.40", "0")}, {4 * kS, change("A", "BUY", "0.37", "500")},
+             {5 * kS, control("_heartbeat", 0)}});
+    EXPECT_EQ(e.exec_risk().kill_reason(), hft::exec::KillReason::Loss);  // 11 USD down
+    EXPECT_GT(e.ledger().capital_usd_days(), 0);
+}

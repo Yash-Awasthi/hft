@@ -37,6 +37,7 @@ struct EngineParams {
     exec::SimConfig sim;
     exec::RiskLimits risk;
     bool long_only = true;
+    exec::Usd capital = 1'000'000 * exec::kDollar;  // paper account (D3)
 };
 
 struct Decision {
@@ -53,7 +54,7 @@ class Engine {
 
     explicit Engine(const EngineParams& p)
         : p_(p),
-          ledger_(1'000'000 * exec::kDollar, p.long_only),
+          ledger_(p.capital, p.long_only),
           risk_(p.risk),
           oms_(1, risk_, exp_, ledger_),
           sim_(p.sim, BookOf{this}) {}
@@ -71,7 +72,7 @@ class Engine {
                 const std::uint32_t n = i + 1;
                 ledger_.ensure(n), exp_.ensure(n, 1), risk_.ensure(n), oms_.ensure(n), sim_.ensure(n);
                 ledger_.set_group(i, 0), exp_.set_group(i, 0), risk_.set_group(i, 0);
-                rules_.resize(n);
+                rules_.resize(n), mid_.resize(n, 0), liq_.resize(n, 0);
                 sim_.set_rules(i, rules_[i]);
             }
         }
@@ -174,7 +175,13 @@ class Engine {
                 if (sim_.position(t) == ledger_.pos(t)) since = 0;
                 else if (!since) since = ns;
                 else if (since > 0 && ns - since > grace) ++mismatches_, since = -1, risk_.kill(exec::KillReason::Mismatch, ns);
+                // Marks for R9; a one-sided book keeps the last ones. ponytail: liquidation mark is
+                // the best bid, ignoring depth; walk the bids if positions outgrow the top level.
+                const TokenBook& b = toks_[t]->maker.book;
+                if (b.two_sided() && !b.crossed()) mid_[t] = (b.best_bid() + b.best_ask()) / 2, liq_[t] = b.best_bid();
             }
+            ledger_.tick(ns);
+            risk_.on_tick(ledger_, mid_.data(), liq_.data(), ns);
             if (risk_.killed() && !cancelled_all_) {
                 cancelled_all_ = true;
                 oms_.cancel_all(ns, sink);
@@ -293,6 +300,7 @@ class Engine {
     // Delivers everything the venue has due at `ns` to the order manager; fills reach the maker.
     void pump(std::int64_t ns) {
         sim_.run(ns, true, [&](const exec::VenueRpt& r) {
+            if (r.kind == exec::VenueRpt::Reject) risk_.on_venue_reject(ns);
             const exec::Ledger::Fill* f = r.kind == exec::VenueRpt::SettleFailed ? ledger_.pending(r.fill_id) : nullptr;
             if (f) toks_[f->token]->maker.on_settle_failed(f->side == exec::Side::Buy, f->px, static_cast<double>(f->qty) * 1e-6);
             const std::uint32_t failed = f ? f->token : kAll;
@@ -331,6 +339,7 @@ class Engine {
     exec::Oms oms_;
     exec::SimVenue<BookOf> sim_;
     std::vector<MarketRules> rules_;
+    std::vector<exec::Px> mid_, liq_;  // marks per token for the loss check
     std::uint64_t mismatches_ = 0;
     bool cancelled_all_ = false, in_trade_ = false;
     std::vector<MakerFill>* fill_log_ = nullptr;

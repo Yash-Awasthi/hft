@@ -47,6 +47,7 @@
 #include "core/tsc.hpp"
 #include "net/http_server.hpp"
 #include "net/tls.hpp"
+#include "pm/config.hpp"
 #include "pm/dashboard.hpp"
 #include "pm/engine.hpp"
 #include "pm/gamma.hpp"
@@ -642,13 +643,7 @@ int main(int argc, char** argv) {
         else if (a == "--replay") o.replay = val();
         else if (a == "--dump-fills") o.dump_fills = val();
         else if (a == "--venue") o.engine.venue = true;
-        else if (a == "--venue-compat") {  // parity with the makers' own fill model (D25)
-            o.engine.venue = true, o.engine.sim.compat_side = true, o.engine.long_only = false;
-            exec::RiskLimits& r = o.engine.risk;
-            r.allow_short = true, r.collar_ticks = 10'000, r.max_open_per_token = r.max_open = 1u << 30;
-            r.token_cap = r.group_cap = r.gross_cap = r.daily_stop = 100'000'000 * exec::kDollar;
-            r.order_burst = r.sustained_burst = r.cancel_burst = r.order_rate_per_s = r.sustained_rate_per_s = r.cancel_rate_per_s = 1'000'000'000;
-        }
+        else if (a == "--venue-compat") o.engine.venue = true, config_detail::compat(o.engine, 1);  // D25
         else if (a == "--lat-ms") o.engine.sim.lat_in = o.engine.sim.lat_out = static_cast<exec::Ns>(num() * 1e6);
         else if (a == "--jitter-ms") o.engine.sim.jitter = static_cast<exec::Ns>(num() * 1e6);
         else if (a == "--seed") o.engine.sim.seed = static_cast<std::uint64_t>(num());

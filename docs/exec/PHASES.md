@@ -55,7 +55,7 @@ Step template: do -> check. "Ask" = stop and ask the owner before continuing.
 ## E4 pm_exec app
 
 - [ ] E4.1 apps/pm_exec.cpp: replay mode over recording + exec.cfg + seed; event loop A1.
-- [ ] E4.2 Strict config parser (SEC4), hard bounds.
+- [x] E4.2 Strict config parser (SEC4), hard bounds: src/pm/config.hpp; unknown, repeated, non-numeric, fractional-integer or out-of-bound values refuse the run (6/6 mutations caught). Venue mode now also runs R9 (loss on the worse of mid and best-bid marks), R13 (reject spike) and capital-days every risk tick (4/4 mutations caught); compat mode lifts R13 as the old model had none.
 - [ ] E4.3 Decision hash v2 (A4.2); same seed twice -> same hash; different seed with faults -> different hash.
 - [ ] E4.4 Paper mode on live feed with inline SimVenue (reuse pm_live feed/ring/recorder).
 - [ ] E4.5 Metrics A5 through existing hand-off; kill via SIGUSR1 and KILL file (D11, D13); SEC3 check.
