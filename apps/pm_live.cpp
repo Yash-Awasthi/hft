@@ -360,13 +360,27 @@ int replay(const Options& o) {
     Engine e(o.engine);
     s.apply(e);
     DecisionHash dh;
-    const auto st = read_records(o.replay, [&](std::int64_t ns, const Event& ev) {
-        e.on_event(ns, ev);
+    Decoder dec;
+    Histogram parse, engine;
+    const auto st = read_lines(o.replay, [&](std::int64_t ns, std::string_view text) {
+        const std::uint64_t a = tsc::start();
+        std::uint64_t in_engine = 0;
+        const bool ok = dec.decode(text, [&](const Event& ev) {
+            const std::uint64_t b = tsc::start();
+            e.on_event(ns, ev);
+            in_engine += tsc::stop() - b;
+        });
+        parse.record(tsc::stop() - a - in_engine), engine.record(in_engine);
         dh.drain(e);
+        return ok;
     });
     e.finish(INT64_MAX);
     std::fprintf(stderr, "files %zu messages %llu parse_errors %llu\n", st.files, (unsigned long long)st.messages,
                  (unsigned long long)st.parse_errors);
+    const double ns = 1 / tsc::ticks_per_ns();
+    std::fprintf(stderr, "per message ns p50/p99/p99.9: parse %.0f/%.0f/%.0f engine %.0f/%.0f/%.0f\n",
+                 parse.percentile(50) * ns, parse.percentile(99) * ns, parse.percentile(99.9) * ns,
+                 engine.percentile(50) * ns, engine.percentile(99) * ns, engine.percentile(99.9) * ns);
     summary(e, dh, stdout);
     return 0;
 }

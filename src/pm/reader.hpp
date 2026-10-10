@@ -158,10 +158,10 @@ class Pipeline {
 
 }  // namespace detail
 
+// Calls `fn(recv_ns, text)` for every message; `fn` returns false when the text is malformed.
 template <class Fn>
-ReadStats read_records(const std::filesystem::path& root, Fn&& fn) {
+ReadStats read_lines(const std::filesystem::path& root, Fn&& fn) {
     ReadStats st;
-    Decoder dec;
     std::int64_t last = 0;
     auto line = [&](std::string_view l) {
         const std::size_t sp = l.find(' ');
@@ -174,7 +174,7 @@ ReadStats read_records(const std::filesystem::path& root, Fn&& fn) {
         if (last) st.max_gap_s = std::max(st.max_gap_s, static_cast<double>(ns - last) * 1e-9);
         last = ns;
         ++st.messages;
-        if (!dec.decode(l.substr(sp + 1), [&](const Event& e) { fn(ns, e); })) ++st.parse_errors;
+        if (!fn(ns, l.substr(sp + 1))) ++st.parse_errors;
     };
     detail::Pipeline pipe(root);
     for (;;) {
@@ -193,6 +193,14 @@ ReadStats read_records(const std::filesystem::path& root, Fn&& fn) {
         pipe.release(it);
     }
     return st;
+}
+
+template <class Fn>
+ReadStats read_records(const std::filesystem::path& root, Fn&& fn) {
+    Decoder dec;
+    return read_lines(root, [&](std::int64_t ns, std::string_view text) {
+        return dec.decode(text, [&](const Event& e) { fn(ns, e); });
+    });
 }
 
 }  // namespace hft::pm
