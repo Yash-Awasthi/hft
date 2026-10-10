@@ -184,6 +184,7 @@ constexpr std::int64_t kExchShift = 10'000'000'000;
 struct Latency {
     Histogram queue, parse, engine, total, exch;  // tsc ticks, except exch in ns plus kExchShift
     void reset() { queue.reset(), parse.reset(), engine.reset(), total.reset(), exch.reset(); }
+    void merge(const Latency& o) { queue.merge(o.queue), parse.merge(o.parse), engine.merge(o.engine), total.merge(o.total); }
 };
 
 std::string fmt(const char* f, double v) {
@@ -202,48 +203,86 @@ std::string json_str(const std::string& s) {
     return o + "\"";
 }
 
-class Metrics {
-   public:
-    void publish(std::string text, std::string json) {
-        std::lock_guard<std::mutex> g(m_);
-        text_ = std::move(text), json_ = std::move(json);
-    }
-    std::string text() {
-        std::lock_guard<std::mutex> g(m_);
-        return text_;
-    }
-    std::string json() {
-        std::lock_guard<std::mutex> g(m_);
-        return json_;
-    }
-
-   private:
-    std::mutex m_;
-    std::string text_ = "# starting\n", json_ = "{}";
+// Percentiles of one histogram in ns, taken on the trading thread so the HTTP thread never
+// touches a histogram.
+struct Pct {
+    double p50 = 0, p99 = 0, p999 = 0, max = 0;
+    std::uint64_t n = 0;
 };
-
-struct Snapshot {
-    const Engine& e;
-    const Session& s;
-    const std::vector<std::unique_ptr<Feed>>& feeds;
-    const Latency &window, &total;
-    double tpn, uptime_s;
-    std::uint64_t records;
-};
-
-std::string lat_json(const Histogram& h, double scale, double shift = 0) {
-    auto v = [&](std::uint64_t x) { return fmt("%.0f", h.count() ? static_cast<double>(x) * scale - shift : 0.0); };
-    return "{\"p50\":" + v(h.percentile(50)) + ",\"p99\":" + v(h.percentile(99)) + ",\"p999\":" + v(h.percentile(99.9)) +
-           ",\"max\":" + v(h.max()) + ",\"n\":" + std::to_string(h.count()) + "}";
+Pct pct(const Histogram& h, double scale, double shift = 0) {
+    if (!h.count()) return {};
+    static constexpr double ps[] = {50, 99, 99.9};
+    std::uint64_t q[3];
+    h.percentiles(ps, q);
+    auto v = [&](std::uint64_t x) { return static_cast<double>(x) * scale - shift; };
+    return {v(q[0]), v(q[1]), v(q[2]), v(h.max()), h.count()};
 }
 
-std::pair<std::string, std::string> render(const Snapshot& x) {
-    const Engine& e = x.e;
-    const double ns = 1 / x.tpn;
+struct TokRow {
+    std::uint32_t tok;
+    std::int32_t best_bid, best_ask, bid, ask;
+    double inv, pnl;
+    std::uint64_t quotes;
+    bool on;
+};
+struct GroupRow {
+    std::uint32_t group;
+    std::uint64_t windows;
+    double open_s;
+    std::int32_t max_edge;
+};
+
+// What the trading thread hands over once a second: plain numbers, copied into buffers that
+// are reused, so taking it allocates nothing after the first second.
+struct State {
+    double uptime_s = 0, pnl = 0, gross = 0;
+    std::uint64_t records = 0, events = 0, trades = 0, fills = 0, arb_open = 0, arb_windows = 0, fallbacks = 0;
+    bool halted = false;
+    std::vector<TokRow> toks;
+    std::vector<GroupRow> groups;
+    bool ready = false;
+};
+
+void capture(State& st, const Engine& e, double up, std::uint64_t records, std::uint64_t fallbacks) {
+    st.uptime_s = up, st.records = records, st.fallbacks = fallbacks;
+    st.events = e.events(), st.trades = e.trades(), st.fills = e.fills();
+    st.pnl = e.pnl(), st.gross = e.gross(), st.halted = e.halted();
+    st.arb_open = e.arb().open_windows();
+    st.toks.resize(e.tokens());
+    for (std::uint32_t i = 0; i < e.tokens(); ++i) {
+        const TokenMaker& m = e.maker(i);
+        st.toks[i] = {i, m.book.best_bid(), m.book.best_ask(), m.bid_px(), m.ask_px(), m.inventory(), m.pnl(), m.quotes(), m.enabled()};
+    }
+    const auto& gs = e.arb().stats();
+    st.groups.resize(gs.size());
+    st.arb_windows = 0;
+    for (std::uint32_t g = 0; g < gs.size(); ++g) {
+        st.groups[g] = {g, gs[g].windows, gs[g].open_seconds, gs[g].max_edge};
+        st.arb_windows += gs[g].windows;
+    }
+    st.ready = true;
+}
+
+// Names fixed at startup, indexed like the engine's tokens and groups.
+struct Names {
+    std::vector<std::string> tokens, groups;
+};
+
+std::string json_lat(const Pct& p) {
+    return "{\"p50\":" + fmt("%.0f", p.p50) + ",\"p99\":" + fmt("%.0f", p.p99) + ",\"p999\":" + fmt("%.0f", p.p999) +
+           ",\"max\":" + fmt("%.0f", p.max) + ",\"n\":" + std::to_string(p.n) + "}";
+}
+
+// Runs on the HTTP thread, from a State only.
+// Latency percentiles of the last full window and of the whole run.
+struct Lat {
+    Pct win[5], tot[4];  // queue, parse, engine, wire to decision, and (window only) exchange to receive
+};
+
+std::pair<std::string, std::string> render(const State& x, const Lat& lat, const Names& names,
+                                           const std::vector<std::unique_ptr<Feed>>& feeds) {
     std::uint64_t msgs = 0, bytes = 0, recon = 0, drops = 0;
-    for (const auto& f : x.feeds) msgs += f->msgs, bytes += f->bytes, recon += f->reconnects, drops += f->drops;
-    std::uint64_t windows = 0;
-    for (const auto& g : e.arb().stats()) windows += g.windows;
+    for (const auto& f : feeds) msgs += f->msgs, bytes += f->bytes, recon += f->reconnects, drops += f->drops;
 
     std::string t;
     auto line = [&](const std::string& k, double v) { t += k + " " + fmt("%.6g", v) + "\n"; };
@@ -251,76 +290,116 @@ std::pair<std::string, std::string> render(const Snapshot& x) {
     line("hft_messages_total", static_cast<double>(msgs));
     line("hft_bytes_total", static_cast<double>(bytes));
     line("hft_records_total", static_cast<double>(x.records));
-    line("hft_events_total", static_cast<double>(e.events()));
-    line("hft_trades_total", static_cast<double>(e.trades()));
-    line("hft_paper_fills_total", static_cast<double>(e.fills()));
+    line("hft_events_total", static_cast<double>(x.events));
+    line("hft_trades_total", static_cast<double>(x.trades));
+    line("hft_paper_fills_total", static_cast<double>(x.fills));
     line("hft_reconnects_total", static_cast<double>(recon));
     line("hft_ring_drops_total", static_cast<double>(drops));
-    line("hft_pnl_usd", e.pnl());
-    line("hft_gross_shares", e.gross());
-    line("hft_halted", e.halted());
-    line("hft_arb_open_windows", static_cast<double>(e.arb().open_windows()));
-    line("hft_arb_windows_total", static_cast<double>(windows));
-    const std::pair<const char*, const Histogram*> stages[] = {
-        {"queue", &x.total.queue}, {"parse", &x.total.parse}, {"engine", &x.total.engine}, {"wire_to_decision", &x.total.total}};
-    for (const auto& [name, h] : stages)
-        for (const double q : {0.5, 0.99, 0.999})
-            line(std::string("hft_latency_ns{stage=\"") + name + "\",quantile=\"" + fmt("%g", q) + "\"}",
-                 static_cast<double>(h->percentile(q * 100)) * ns);
+    line("hft_decoder_fallbacks_total", static_cast<double>(x.fallbacks));
+    line("hft_pnl_usd", x.pnl);
+    line("hft_gross_shares", x.gross);
+    line("hft_halted", x.halted);
+    line("hft_arb_open_windows", static_cast<double>(x.arb_open));
+    line("hft_arb_windows_total", static_cast<double>(x.arb_windows));
+    const char* stages[] = {"queue", "parse", "engine", "wire_to_decision"};
+    for (int i = 0; i < 4; ++i) {
+        const std::string k = std::string("hft_latency_ns{stage=\"") + stages[i] + "\",quantile=\"";
+        line(k + "0.5\"}", lat.tot[i].p50), line(k + "0.99\"}", lat.tot[i].p99), line(k + "0.999\"}", lat.tot[i].p999);
+    }
 
     std::string j = "{\"uptime_s\":" + fmt("%.1f", x.uptime_s) + ",\"messages\":" + std::to_string(msgs) +
-                    ",\"bytes\":" + std::to_string(bytes) + ",\"events\":" + std::to_string(e.events()) +
-                    ",\"trades\":" + std::to_string(e.trades()) + ",\"fills\":" + std::to_string(e.fills()) +
+                    ",\"bytes\":" + std::to_string(bytes) + ",\"events\":" + std::to_string(x.events) +
+                    ",\"trades\":" + std::to_string(x.trades) + ",\"fills\":" + std::to_string(x.fills) +
                     ",\"reconnects\":" + std::to_string(recon) + ",\"drops\":" + std::to_string(drops) +
-                    ",\"pnl\":" + fmt("%.2f", e.pnl()) + ",\"gross\":" + fmt("%.0f", e.gross()) +
-                    ",\"halted\":" + (e.halted() ? "true" : "false") +
-                    ",\"arb_open\":" + std::to_string(e.arb().open_windows()) + ",\"arb_windows\":" + std::to_string(windows);
-    j += ",\"lat\":{\"queue\":" + lat_json(x.window.queue, ns) + ",\"parse\":" + lat_json(x.window.parse, ns) +
-         ",\"engine\":" + lat_json(x.window.engine, ns) + ",\"total\":" + lat_json(x.window.total, ns) +
-         ",\"exch\":" + lat_json(x.window.exch, 1, static_cast<double>(kExchShift)) + "}";
+                    ",\"pnl\":" + fmt("%.2f", x.pnl) + ",\"gross\":" + fmt("%.0f", x.gross) +
+                    ",\"halted\":" + (x.halted ? "true" : "false") + ",\"arb_open\":" + std::to_string(x.arb_open) +
+                    ",\"arb_windows\":" + std::to_string(x.arb_windows);
+    j += ",\"lat\":{\"queue\":" + json_lat(lat.win[0]) + ",\"parse\":" + json_lat(lat.win[1]) + ",\"engine\":" + json_lat(lat.win[2]) +
+         ",\"total\":" + json_lat(lat.win[3]) + ",\"exch\":" + json_lat(lat.win[4]) + "}";
     j += ",\"conns\":[";
     const std::int64_t now = now_ns();
-    for (std::size_t i = 0; i < x.feeds.size(); ++i) {
-        const Feed& f = *x.feeds[i];
+    for (std::size_t i = 0; i < feeds.size(); ++i) {
+        const Feed& f = *feeds[i];
         const std::int64_t rx = f.last_rx_ns;
         j += (i ? "," : "") + std::string("{\"tokens\":") + std::to_string(f.ids.size()) + ",\"messages\":" +
              std::to_string(f.msgs) + ",\"reconnects\":" + std::to_string(f.reconnects) +
              ",\"age_s\":" + fmt("%.1f", rx ? static_cast<double>(now - rx) * 1e-9 : -1.0) + "}";
     }
     j += "],\"groups\":[";
-    std::vector<std::size_t> gi(e.arb().stats().size());
-    for (std::size_t i = 0; i < gi.size(); ++i) gi[i] = i;
-    const auto& gs = e.arb().stats();
-    std::sort(gi.begin(), gi.end(), [&](std::size_t a, std::size_t b) {
-        return gs[a].windows != gs[b].windows ? gs[a].windows > gs[b].windows : gs[a].name < gs[b].name;
+    std::vector<GroupRow> gs = x.groups;
+    auto gname = [&](std::uint32_t g) -> const std::string& { return names.groups[g]; };
+    std::sort(gs.begin(), gs.end(), [&](const GroupRow& a, const GroupRow& b) {
+        return a.windows != b.windows ? a.windows > b.windows : gname(a.group) < gname(b.group);
     });
-    for (std::size_t k = 0; k < gi.size() && k < 25; ++k) {
-        const auto& g = gs[gi[k]];
-        j += (k ? "," : "") + std::string("{\"name\":") + json_str(g.name) + ",\"windows\":" + std::to_string(g.windows) +
-             ",\"open_s\":" + fmt("%.3f", g.open_seconds) + ",\"max_edge\":" + std::to_string(g.max_edge) + "}";
-    }
+    for (std::size_t k = 0; k < gs.size() && k < 25; ++k)
+        j += (k ? "," : "") + std::string("{\"name\":") + json_str(gname(gs[k].group)) + ",\"windows\":" +
+             std::to_string(gs[k].windows) + ",\"open_s\":" + fmt("%.3f", gs[k].open_s) +
+             ",\"max_edge\":" + std::to_string(gs[k].max_edge) + "}";
     j += "],\"tokens\":[";
-    std::vector<std::uint32_t> ti;
-    for (std::uint32_t i = 0; i < e.tokens(); ++i) ti.push_back(i);
-    std::sort(ti.begin(), ti.end(), [&](std::uint32_t a, std::uint32_t b) {
-        const double x1 = std::abs(e.maker(a).inventory()) + static_cast<double>(e.maker(a).quotes()) * 1e-6;
-        const double x2 = std::abs(e.maker(b).inventory()) + static_cast<double>(e.maker(b).quotes()) * 1e-6;
-        return x1 != x2 ? x1 > x2 : a < b;
+    std::vector<TokRow> ts = x.toks;
+    std::sort(ts.begin(), ts.end(), [](const TokRow& a, const TokRow& b) {
+        const double x1 = std::abs(a.inv) + static_cast<double>(a.quotes) * 1e-6;
+        const double x2 = std::abs(b.inv) + static_cast<double>(b.quotes) * 1e-6;
+        return x1 != x2 ? x1 > x2 : a.tok < b.tok;
     });
-    std::unordered_map<std::string, const std::string*> label;
-    for (const auto& t : x.s.tokens) label[t.id] = &t.label;
-    for (std::size_t k = 0; k < ti.size() && k < 25; ++k) {
-        const TokenMaker& m = e.maker(ti[k]);
-        const auto it = label.find(e.token_id(ti[k]));
-        j += (k ? "," : "") + std::string("{\"label\":") + json_str(it == label.end() ? e.token_id(ti[k]) : *it->second) +
-             ",\"best_bid\":" + std::to_string(m.book.best_bid()) + ",\"best_ask\":" + std::to_string(m.book.best_ask()) +
-             ",\"bid\":" + std::to_string(m.bid_px()) + ",\"ask\":" + std::to_string(m.ask_px()) +
-             ",\"inv\":" + fmt("%.0f", m.inventory()) + ",\"pnl\":" + fmt("%.2f", m.pnl()) +
-             ",\"quotes\":" + std::to_string(m.quotes()) + ",\"on\":" + (m.enabled() ? "true" : "false") + "}";
+    for (std::size_t k = 0; k < ts.size() && k < 25; ++k) {
+        const TokRow& r = ts[k];
+        j += (k ? "," : "") + std::string("{\"label\":") + json_str(names.tokens[r.tok]) +
+             ",\"best_bid\":" + std::to_string(r.best_bid) + ",\"best_ask\":" + std::to_string(r.best_ask) +
+             ",\"bid\":" + std::to_string(r.bid) + ",\"ask\":" + std::to_string(r.ask) + ",\"inv\":" + fmt("%.0f", r.inv) +
+             ",\"pnl\":" + fmt("%.2f", r.pnl) + ",\"quotes\":" + std::to_string(r.quotes) +
+             ",\"on\":" + (r.on ? "true" : "false") + "}";
     }
     j += "]}";
     return {t, j};
 }
+
+// Hand-off between the trading thread and the HTTP thread. Once a second the trading thread
+// swaps its State and its window of histograms for the ones the HTTP thread prepared, under a
+// lock it only tries, so it never waits and never scans or clears a histogram itself. The HTTP
+// thread folds the full window into the run totals and clears it for the next swap.
+class Metrics {
+   public:
+    Metrics(Latency& spare, double tpn) : spare_(&spare), tpn_(tpn) {}
+
+    void offer(State& st, Latency*& cur) {
+        if (!m_.try_lock()) return;
+        std::swap(shared_, st);
+        if (spare_) full_ = cur, cur = spare_, spare_ = nullptr;
+        m_.unlock();
+    }
+    void fold() {
+        std::lock_guard<std::mutex> g(m_);
+        if (!full_) return;
+        const double ns = 1 / tpn_;
+        const Histogram* w[4] = {&full_->queue, &full_->parse, &full_->engine, &full_->total};
+        const Histogram* t[4] = {&total_.queue, &total_.parse, &total_.engine, &total_.total};
+        total_.merge(*full_);
+        for (int i = 0; i < 4; ++i) lat_.win[i] = pct(*w[i], ns), lat_.tot[i] = pct(*t[i], ns);
+        lat_.win[4] = pct(full_->exch, 1, static_cast<double>(kExchShift));
+        full_->reset();
+        spare_ = full_, full_ = nullptr;
+    }
+    std::pair<std::string, std::string> page(const Names& names, const std::vector<std::unique_ptr<Feed>>& feeds) {
+        std::lock_guard<std::mutex> g(m_);
+        if (!shared_.ready) return {"# starting\n", "{}"};
+        return render(shared_, lat_, names, feeds);
+    }
+    // Run totals including the window still being filled; call once the threads have stopped.
+    const Latency& totals(const Latency& cur) {
+        fold();
+        total_.merge(cur);
+        return total_;
+    }
+
+   private:
+    std::mutex m_;
+    State shared_;
+    Lat lat_;
+    Latency total_;
+    Latency *spare_, *full_ = nullptr;
+    double tpn_;
+};
 
 void pin(int cpu) {
     if (cpu < 0) return;
@@ -410,23 +489,37 @@ int live(const Options& o) {
     std::vector<std::thread> threads;
     for (auto& f : feeds) threads.emplace_back([&f] { feed_loop(*f); });
 
-    Metrics metrics;
+    Names names;
+    {
+        std::unordered_map<std::string, const std::string*> label;
+        for (const auto& t : s.tokens) label[t.id] = &t.label;
+        for (std::uint32_t i = 0; i < e.tokens(); ++i) {
+            const auto it = label.find(e.token_id(i));
+            names.tokens.push_back(it == label.end() ? e.token_id(i) : *it->second);
+        }
+        for (const auto& g : e.arb().stats()) names.groups.push_back(g.name);
+    }
+    const double tpn = tsc::ticks_per_ns();
+    Latency lat[2];
+    Latency* window = &lat[0];
+    Metrics metrics(lat[1], tpn);
     net::HttpServer http;
     if (!http.listen(static_cast<std::uint16_t>(o.port))) std::fprintf(stderr, "http: cannot listen on %d\n", o.port);
     else std::fprintf(stderr, "dashboard http://127.0.0.1:%u/\n", http.port());
     std::thread web([&] {
-        while (!g_stop)
+        while (!g_stop) {
+            metrics.fold();
             http.poll_once(200, [&](std::string_view p) {
-                if (p == "/metrics") return net::HttpResponse{200, "text/plain; version=0.0.4", metrics.text()};
-                if (p == "/metrics.json") return net::HttpResponse{200, "application/json", metrics.json()};
+                if (p == "/metrics") return net::HttpResponse{200, "text/plain; version=0.0.4", metrics.page(names, feeds).first};
+                if (p == "/metrics.json") return net::HttpResponse{200, "application/json", metrics.page(names, feeds).second};
                 if (p == "/") return net::HttpResponse{200, "text/html; charset=utf-8", std::string(kDashboard)};
                 return net::HttpResponse{404, "text/plain", "not found\n"};
             });
+        }
     });
 
     pin(o.cpu);
-    const double tpn = tsc::ticks_per_ns();
-    Latency window, total;
+    State state;
     Decoder dec;
     DecisionHash dh;
     const auto t0 = std::chrono::steady_clock::now();
@@ -443,17 +536,17 @@ int live(const Options& o) {
             const std::uint64_t b = tsc::start();
             if (ev.exch_ms > 0) {
                 const std::int64_t d = ns - ev.exch_ms * 1'000'000 + kExchShift;
-                window.exch.record(d > 0 ? static_cast<std::uint64_t>(d) : 0);
+                window->exch.record(d > 0 ? static_cast<std::uint64_t>(d) : 0);
             }
             e.on_event(ns, ev);
             in_engine += tsc::stop() - b;
         });
         const std::uint64_t z = tsc::stop();
         if (rx_tsc) {
-            window.queue.record(a - rx_tsc), total.queue.record(a - rx_tsc);
-            window.parse.record(z - a - in_engine), total.parse.record(z - a - in_engine);
-            window.engine.record(in_engine), total.engine.record(in_engine);
-            window.total.record(z - rx_tsc), total.total.record(z - rx_tsc);
+            window->queue.record(a - rx_tsc);
+            window->parse.record(z - a - in_engine);
+            window->engine.record(in_engine);
+            window->total.record(z - rx_tsc);
         }
         dh.drain(e);
         if (rec) rec->write(ns, text);
@@ -482,9 +575,8 @@ int live(const Options& o) {
         }
         if (now >= next_pub) {
             const double up = std::chrono::duration<double>(now - t0).count();
-            auto [txt, js] = render({e, s, feeds, window, total, tpn, up, records});
-            metrics.publish(std::move(txt), std::move(js));
-            window.reset();
+            capture(state, e, up, records, dec.fallbacks());
+            metrics.offer(state, window);
             next_pub = now + std::chrono::seconds(1);
             if (o.seconds > 0 && up >= o.seconds) g_stop = true;
         }
@@ -495,6 +587,7 @@ int live(const Options& o) {
     e.finish(now_ns());
     summary(e, dh, stdout);
     const double ns = 1 / tpn;
+    const Latency& total = metrics.totals(*window);
     std::fprintf(stderr, "latency ns p50/p99/p99.9: queue %.0f/%.0f/%.0f parse %.0f/%.0f/%.0f engine %.0f/%.0f/%.0f "
                  "wire_to_decision %.0f/%.0f/%.0f\n",
                  total.queue.percentile(50) * ns, total.queue.percentile(99) * ns, total.queue.percentile(99.9) * ns,

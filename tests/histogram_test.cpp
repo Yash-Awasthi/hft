@@ -34,6 +34,43 @@ TEST(Histogram, PercentilesWithinRelativeErrorOfExact) {
     EXPECT_EQ(h.count(), v.size());
 }
 
+TEST(Histogram, OneScanGivesTheSamePercentilesAndResetClearsEverything) {
+    std::mt19937_64 rng(11);
+    Histogram h;
+    const double ps[] = {1, 50, 90, 99, 99.9, 100};
+    for (int round = 0; round < 50; ++round) {
+        std::lognormal_distribution<double> d(3.0 + round % 7, 0.5 + round % 3);
+        const int n = round % 10 == 0 ? 0 : 1 + static_cast<int>(rng() % 5000);
+        for (int i = 0; i < n; ++i) h.record(static_cast<std::uint64_t>(d(rng)));
+        std::uint64_t got[6];
+        h.percentiles(ps, got);
+        for (int k = 0; k < 6; ++k) ASSERT_EQ(got[k], h.percentile(ps[k])) << round << " " << ps[k];
+        h.reset();
+        h.record(1ull << 60);  // above every earlier value: a bucket left over would come first
+        ASSERT_EQ(h.percentile(1), 1ull << 60);
+        h.reset();
+    }
+}
+
+TEST(Histogram, MergeEqualsRecordingEverythingInOne) {
+    std::mt19937_64 rng(3);
+    std::lognormal_distribution<double> d(6.0, 2.0);
+    Histogram all, sum, part;
+    for (int round = 0; round < 20; ++round) {
+        for (int i = 0; i < 1000 * (round % 4); ++i) {
+            const auto v = static_cast<std::uint64_t>(d(rng));
+            all.record(v), part.record(v);
+        }
+        sum.merge(part);
+        part.reset();
+    }
+    EXPECT_EQ(sum.count(), all.count());
+    EXPECT_EQ(sum.max(), all.max());
+    EXPECT_EQ(sum.min(), all.min());
+    EXPECT_EQ(sum.mean(), all.mean());
+    for (const double p : {0.1, 1.0, 50.0, 99.0, 99.9, 99.99}) EXPECT_EQ(sum.percentile(p), all.percentile(p)) << p;
+}
+
 TEST(Histogram, SmallValuesAreExact) {
     Histogram h;
     for (std::uint64_t i = 1; i <= 1000; ++i) h.record(i);

@@ -25,10 +25,20 @@ class Histogram {
         if (v > max_) max_ = v;
         if (v < min_) min_ = v;
     }
+    // Only buckets between min and max can be non-zero; the full table is 229 KB.
     void reset() {
-        std::fill(counts_.begin(), counts_.end(), 0);
+        if (n_) std::fill(counts_.begin() + static_cast<std::ptrdiff_t>(index(min_)),
+                          counts_.begin() + static_cast<std::ptrdiff_t>(index(max_)) + 1, 0);
         n_ = sum_ = max_ = 0;
         min_ = ~0ull;
+    }
+
+    // Adds every value recorded in o.
+    void merge(const Histogram& o) {
+        if (!o.n_) return;
+        for (std::size_t i = index(o.min_), e = index(o.max_); i <= e; ++i) counts_[i] += o.counts_[i];
+        n_ += o.n_, sum_ += o.sum_;
+        max_ = std::max(max_, o.max_), min_ = std::min(min_, o.min_);
     }
 
     std::uint64_t count() const { return n_; }
@@ -50,6 +60,22 @@ class Histogram {
             }
         }
         return max_;
+    }
+
+    // percentile() for each of ps (ascending) in one scan from the lowest used bucket.
+    template <std::size_t N>
+    void percentiles(const double (&ps)[N], std::uint64_t (&out)[N]) const {
+        std::size_t k = 0, i = n_ ? index(min_) : counts_.size();
+        std::uint64_t seen = 0;
+        for (; k < N; ++k) {
+            auto rank = static_cast<std::uint64_t>(ps[k] / 100.0 * static_cast<double>(n_) + 0.5);
+            if (rank < 1) rank = 1;
+            for (; i < counts_.size() && seen + counts_[i] < rank; ++i) seen += counts_[i];
+            if (i == counts_.size()) break;
+            const std::uint64_t hi = i + 1 < counts_.size() ? lowest(i + 1) - 1 : ~0ull;
+            out[k] = hi < max_ ? hi : max_;
+        }
+        for (; k < N; ++k) out[k] = n_ ? max_ : 0;
     }
 
     static std::size_t index(std::uint64_t v) {
