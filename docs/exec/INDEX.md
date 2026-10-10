@@ -5,7 +5,7 @@ Terse reference docs; ids are stable, cite them in commits and code comments whe
 
 ## Status
 
-- Current: E0-E3, E5, E6 done (G0-G3, G5, G6 met 2026-10-10); E4 done except the G4 1 h paper run. Next: G4, then E7.
+- Current: done. E0-E7, gates G0-G7 met 2026-10-10. Results: RESULTS.md. Optional items (V8, V12, V13, X11 batching skew) remain.
 - Branch: `exec-layer` (from `phase1-hotpath`).
 - Baseline hashes (must stay equal unless a step says otherwise):
   - `pm_live --replay ~/data/pm-live/20261009T160027Z` -> `decision_hash 6facf575ad8d84bc`

@@ -61,13 +61,17 @@ cycle counts come from Cachegrind and `rdtscp`.
 - Recorder stops instead of stalling trading when it falls behind.
 - Result: README "Live paper trading"; replay wall time 2.43 s to 1.92 s.
 
+## P6. Execution layer, paper only (done)
+
+- Ledger, risk and kill switch, order manager, simulated venue with five core faults; makers
+  and an arbitrage executor route through them; `pm_exec` for replay and paper runs.
+- Result: README "Paper execution"; docs/exec/RESULTS.md.
+
 ## Next
 
 - Feed path: decode WebSocket frames straight into the ring (no `std::string` copy) and
   stamp receipt with the kernel's socket timestamp, so wire-to-decision starts at the wire.
 - Build: system zstd, LZ4, zlib-ng and OpenSSL instead of vcpkg; benchmarks on `rdtsc`.
-- Execution layer (no live orders): docs/exec/INDEX.md. Order state machine,
-  idempotent client ids, risk, kill switch, simulated venue with faults, arbitrage executor.
 - Let `pm_live --record` run for days next to the recorder, then report arbitrage windows
   (count, duration, edge, size) and maker fills per event.
 - Bare-Linux run for hardware counters and futex wake latency without a hypervisor.

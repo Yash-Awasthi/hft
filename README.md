@@ -248,6 +248,31 @@ and by the fuzzer. Metrics no longer render on the trading thread: once a second
 snapshot and its window of histograms under a lock it only tries, and the HTTP thread does
 the rest (stall 376 µs to 24 µs at p50, 718 µs to 76 µs at worst, over 60 s live).
 
+## Paper execution
+
+`pm_exec` puts the makers and an arbitrage executor behind pre-trade risk, an order manager
+and a simulated venue (latency, queue position, fees, settlement, faults). Nothing leaves the
+machine: there is no order entry code. Design and decisions: [docs/exec](docs/exec/INDEX.md).
+
+```
+pm_exec --replay data/live --config config/exec.cfg --set arb=1   # summary and hashes
+pm_exec --paper --run runs/today --config config/exec.cfg          # live feed, recorded
+pm_exec --replay runs/today                                        # the paper run's own hashes
+touch runs/today/KILL                                              # or SIGUSR1: cancel all, stop
+```
+
+- A run is a function of the recording, `exec.cfg` and its seed: replays give the same
+  `decision_hash_v2`, and a paper run replays to its own hashes, kill switch included.
+- Dropped acks and fills, duplicates, disconnects and failed settlements at 20-30%: zero
+  illegal reports; a dropped fill ends in the kill switch naming the position mismatch; no
+  arbitrage set is left incomplete without being counted.
+- On the 2.0M-message reference recording, pinned to one vCPU: intent to venue request
+  172 ns p50 / 649 ns p99, engine 556 ns p50 per message, 514k messages/s; in isolation the
+  risk check takes 19.6 ns and each order-manager operation 12 ns.
+- Same recording at a 182 ms round trip: 305 arbitrage windows, 19 attempts; 18 of them lost a
+  leg and were completed, for -12.15 USD after fees. Full tables and their commands:
+  [docs/exec/RESULTS.md](docs/exec/RESULTS.md); demos with fixed hashes: `scripts/demo/`.
+
 ## License
 
 MIT; see [LICENSE](LICENSE).

@@ -61,7 +61,7 @@ Step template: do -> check. "Ask" = stop and ask the owner before continuing.
 - [x] E4.5 Metrics A5 through existing hand-off; kill via SIGUSR1 and KILL file (D11, D13); SEC3 check. Kill: both triggers tested on paper runs (all orders cancelled, risk rejects Killed after, kill.log, latch refuses the next start, --reset-kill clears it; replay of the killed run reproduces it). SEC3: port on 127.0.0.1 only (ss -ltnp). A5 not yet: unknown_orders, cancel_races, per-operation latency (E6.1 measures it), leg_* (E5).
 - [x] E4.5b Known bug: `pm_arb --help` (any unknown argument) throws filesystem_error uncaught; make all apps reject unknown flags with usage and exit 2. apps/args.hpp; scripts/check_cli.sh (8 apps failed before, none after; a missing input directory also exits 2).
 - [x] E4.6 Ask: retire pm_live in favour of pm_exec, or keep both? Default: keep both until E7. Default taken (no fact against it).
-- G4: replay determinism; 1 h paper run: zero illegal transitions, zero reconcile mismatch; TSan 5 min paper run clean.
+- G4: replay determinism; 1 h paper run: zero illegal transitions, zero reconcile mismatch; TSan 5 min paper run clean. MET 2026-10-10: ~/data/exec/runs/g4-1h-20261010T145022Z (1.86M events, 16832 orders, 64 fills): 0 illegal, 0 mismatches, no kill; its replay on the E6 build gives the same decision_hash_v2 596a69f1d4a9faf7; TSan paper run 300 s, no reports.
 
 ## E5 Arb executor
 
@@ -85,8 +85,8 @@ Step template: do -> check. "Ask" = stop and ask the owner before continuing.
 
 - [x] E7.1 CI: alloc test, exec bench smoke, oms_fuzz 60 s. ci.yml also runs on exec-layer pushes, fuzzes itch, tape and oms 60 s each (clean locally), and runs scripts/check_cli.sh.
 - [x] E7.2 Security gates SEC-G1..G5. scripts/security_gates.sh (job gates); G1 and G5 patterns refined (SECURITY.md), each still catches a planted hit.
-- [ ] E7.3 README/ROADMAP: measured numbers only; INDEX status -> done.
-- G7: CI green, gates clean.
+- [x] E7.3 README/ROADMAP: measured numbers only; INDEX status -> done.
+- G7: CI green, gates clean. MET 2026-10-10 (run 38064608707: 10 builds, fuzz, gates).
 
 ## Stop conditions (any phase)
 
