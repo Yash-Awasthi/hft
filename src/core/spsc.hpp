@@ -10,8 +10,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <new>
 #include <string_view>
+
+#include "core/pool.hpp"
 
 namespace hft {
 
@@ -78,9 +79,9 @@ class SpscBytes {
         std::string_view data;  // valid until release()
     };
 
-    explicit SpscBytes(std::size_t capacity_pow2)
-        : cap_(capacity_pow2), buf_(new (std::align_val_t(64)) std::byte[capacity_pow2]) {}
-    ~SpscBytes() { ::operator delete[](buf_, std::align_val_t(64)); }
+    // The buffer is a Pool mapping: 2 MB pages and pre-faulted, so the first lap does not
+    // page-fault on the producer (it did: p99.9 3-6 us, max 160 us per write at 8 MB).
+    explicit SpscBytes(std::size_t capacity_pow2) : cap_(capacity_pow2), mem_(capacity_pow2), buf_(mem_.data()) {}
     SpscBytes(const SpscBytes&) = delete;
     SpscBytes& operator=(const SpscBytes&) = delete;
 
@@ -140,6 +141,7 @@ class SpscBytes {
     static std::size_t round8(std::size_t n) { return (n + 7) & ~std::size_t{7}; }
 
     const std::size_t cap_;
+    Pool<std::byte> mem_;
     std::byte* const buf_;
     alignas(64) std::atomic<std::size_t> head_{0};
     std::size_t tail_cache_ = 0, next_ = 0;
