@@ -5,3 +5,11 @@ __pycache__/
 .venv/
 site/
 .cache/
+
+# Secrets never belong in the repository.
+*.key
+*.pem
+*.secret
+.env
+.env.*
+secrets/
