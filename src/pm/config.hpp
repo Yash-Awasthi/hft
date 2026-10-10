@@ -57,6 +57,7 @@ inline const Key kKeys[] = {
     {"disconnect_every_s", 0, 86'400, false, [](EngineParams& p, double v) { p.sim.disc_every = sec(v); }},
     {"disconnect_for_s", 0, 3'600, false, [](EngineParams& p, double v) { p.sim.disc_for = sec(v); }},
     {"compat", 0, 1, true, compat},
+    {"session", 1, 65'535, true, [](EngineParams& p, double v) { p.session = static_cast<std::uint16_t>(v); }},
     // account and risk (D3)
     {"capital_usd", 1, kMaxUsd, false, [](EngineParams& p, double v) { p.capital = usd(v); }},
     {"token_cap_usd", 0, kMaxUsd, false, [](EngineParams& p, double v) { p.risk.token_cap = usd(v); }},

@@ -16,6 +16,7 @@
 #include <string>
 #include <vector>
 
+#include "args.hpp"
 #include "data/gzip.hpp"
 #include "data/prefetch.hpp"
 #include "data/store.hpp"
@@ -116,6 +117,7 @@ int main(int argc, char** argv) {
             args.push_back(argv[i]);
         }
     }
+    if (!hft::app::known_options(argc, argv, {"--codec"}, "usage: ingest <output-dir> [day.gz] [--codec lz4|zstd]")) return 2;
     if (args.empty() || args.size() > 2 || std::find(args.begin(), args.end(), nullptr) != args.end()) {
         std::fprintf(stderr, "usage: ingest <output-dir> [day.gz] [--codec lz4|zstd]\n");
         return 2;

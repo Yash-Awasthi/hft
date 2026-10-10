@@ -6,14 +6,14 @@
 #include <string>
 #include <vector>
 
+#include "args.hpp"
 #include "core/endian.hpp"
 #include "data/store.hpp"
 
 int main(int argc, char** argv) {
-    if (argc != 2 && argc != 3) {
-        std::fprintf(stderr, "usage: store_cat <store-dir> [read-threads]\n");
-        return 2;
-    }
+    constexpr const char* usage = "usage: store_cat <store-dir> [read-threads]";
+    if (argc != 2 && argc != 3) return std::fprintf(stderr, "%s\n", usage), 2;
+    if (!hft::app::known_options(argc, argv, {}, usage) || !hft::app::is_dir(argv[1], usage)) return 2;
     const std::filesystem::path dir = argv[1];
     std::vector<std::uint16_t> locates;
     for (const auto& e : std::filesystem::directory_iterator(dir))

@@ -14,6 +14,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "args.hpp"
 #include "pm/maker.hpp"
 #include "pm/reader.hpp"
 
@@ -21,10 +22,11 @@ using hft::pm::Event;
 using hft::pm::Kind;
 
 int main(int argc, char** argv) {
-    if (argc < 2) {
-        std::fprintf(stderr, "usage: pm_mm <record-dir> [--gamma G] [--k K] [--size S] [--max-inv N] [--horizon-s T]\n");
+    constexpr const char* usage = "usage: pm_mm <record-dir> [--gamma G] [--k K] [--size S] [--max-inv N] [--horizon-s T]";
+    if (argc < 2) return std::fprintf(stderr, "%s\n", usage), 2;
+    if (!hft::app::known_options(argc, argv, {"--gamma", "--k", "--size", "--max-inv", "--horizon-s"}, usage) ||
+        !hft::app::is_dir(argv[1], usage))
         return 2;
-    }
     hft::pm::MakerParams p;
     for (int i = 2; i + 1 < argc; i += 2) {
         const std::string a = argv[i];

@@ -38,6 +38,7 @@ struct EngineParams {
     exec::RiskLimits risk;
     bool long_only = true;
     exec::Usd capital = 1'000'000 * exec::kDollar;  // paper account (D3)
+    std::uint16_t session = 1;  // top bits of every client order id (DESIGN T6)
 };
 
 struct Decision {
@@ -56,7 +57,7 @@ class Engine {
         : p_(p),
           ledger_(p.capital, p.long_only),
           risk_(p.risk),
-          oms_(1, risk_, exp_, ledger_),
+          oms_(p.session, risk_, exp_, ledger_),
           sim_(p.sim, BookOf{this}) {}
 
     // Token index for an id, created on first sight.
@@ -146,6 +147,10 @@ class Engine {
                 break;
             }
             case Kind::Other:
+                if (e.type == "_kill" && p_.venue) {  // operator trip (D11), recorded so a replay sees it
+                    risk_.kill(exec::KillReason::Operator, ns);
+                    cancel_if_killed(ns);
+                }
                 if (e.conn >= 0 && static_cast<std::size_t>(e.conn) < conns_.size()) {
                     Conn& c = conns_[static_cast<std::size_t>(e.conn)];
                     c.last_ns = ns;
@@ -163,7 +168,7 @@ class Engine {
     void tick(std::int64_t ns) {
         next_tick_ = ns + static_cast<std::int64_t>(p_.tick_s * 1e9);
         if (p_.venue) {  // order timeouts, freeing finished orders, position reconciliation (R14)
-            auto sink = [&](const exec::VenueReq& r) { sim_.request(r, ns); };
+            auto sink = [&](const exec::VenueReq& r) { send(r, ns); };
             oms_.on_timer(ns, sink);
             pump(ns);
             // Fills in flight (latency, settlement, a held connection) make positions differ for
@@ -182,11 +187,7 @@ class Engine {
             }
             ledger_.tick(ns);
             risk_.on_tick(ledger_, mid_.data(), liq_.data(), ns);
-            if (risk_.killed() && !cancelled_all_) {
-                cancelled_all_ = true;
-                oms_.cancel_all(ns, sink);
-                pump(ns);
-            }
+            cancel_if_killed(ns);
         }
         if (!p_.quote) return;
         double pnl = 0, gross = 0;
@@ -231,6 +232,12 @@ class Engine {
     const exec::SimStats& venue_stats() const { return sim_.stats(); }
     const exec::Risk& exec_risk() const { return risk_; }
     std::uint64_t position_mismatches() const { return mismatches_; }
+    // Hash of every order intent with its risk result, venue request and report, the ledger
+    // after each report, and the kill (A4.2); quotes are in the decision log instead.
+    std::uint64_t exec_hash() const { return xh_.value(); }
+    bool venue() const { return p_.venue; }
+    // Ledger PnL at the marks of the last risk tick.
+    exec::Usd exec_pnl() const { return ledger_.total(mid_.data()); }
 
     // Read-only views for reports and metrics.
     std::size_t tokens() const { return toks_.size(); }
@@ -278,7 +285,7 @@ class Engine {
         Tok& t = *toks_[i];
         const std::int32_t px[2] = {t.maker.bid_px(), t.maker.ask_px()};
         const std::uint64_t seq[2] = {t.maker.bid_seq(), t.maker.ask_seq()};
-        auto sink = [&](const exec::VenueReq& r) { sim_.request(r, ns); };
+        auto sink = [&](const exec::VenueReq& r) { send(r, ns); };
         bool cancelled = false;
         for (int s = 0; s < 2; ++s)
             if (t.live[s].cl && (px[s] < 0 || seq[s] != t.live[s].seq)) cancelled |= oms_.cancel(t.live[s].cl, ns, sink), t.live[s].cl = 0;
@@ -293,7 +300,9 @@ class Engine {
             t.live[s].seq = seq[s];
             const exec::OrderIntent in{i, s ? exec::Side::Sell : exec::Side::Buy, exec::Tif::Gtc, true, 0, px[s], q, 0};
             const exec::MarketView mv{t.maker.book.best_bid(), t.maker.book.best_ask(), t.seeded, !t.seeded, &rules_[i]};
-            t.live[s].cl = oms_.submit(in, mv, ns, sink);
+            exec::Reject why;
+            t.live[s].cl = oms_.submit(in, mv, ns, sink, &why);
+            xh_.add(ns, i, s, px[s], q, why);
         }
         pump(ns);
     }
@@ -304,6 +313,7 @@ class Engine {
             const exec::Ledger::Fill* f = r.kind == exec::VenueRpt::SettleFailed ? ledger_.pending(r.fill_id) : nullptr;
             if (f) toks_[f->token]->maker.on_settle_failed(f->side == exec::Side::Buy, f->px, static_cast<double>(f->qty) * 1e-6);
             const std::uint32_t failed = f ? f->token : kAll;
+            xh_.add(ns, r.kind, r.status, r.reason, r.px, r.qty, r.fee, r.cl_id, r.venue_id, r.fill_id, r.venue_ns);
             oms_.on_report(r, ns, [&](const exec::Order& o, exec::OrdEvent ev, exec::Qty q, exec::Px p) {
                 Tok& t = *toks_[o.in.token];
                 const int s = o.in.side == exec::Side::Buy ? 0 : 1;
@@ -316,7 +326,20 @@ class Engine {
                 if (current && exec::terminal(o.state)) t.live[s].cl = 0;
             });
             if (failed != kAll) own(failed);
+            xh_.add(ledger_.cash(), ledger_.realised());
         });
+    }
+    // R16: the first time the switch is seen tripped, every open order is cancelled.
+    void cancel_if_killed(std::int64_t ns) {
+        if (!risk_.killed() || cancelled_all_) return;
+        cancelled_all_ = true;
+        xh_.add(ns, risk_.kill_reason());
+        oms_.cancel_all(ns, [&](const exec::VenueReq& r) { send(r, ns); });
+        pump(ns);
+    }
+    void send(const exec::VenueReq& r, std::int64_t ns) {
+        xh_.add(ns, r.kind, r.side, r.tif, r.post_only, r.token, r.px, r.qty, r.cl_id);
+        sim_.request(r, ns);
     }
     void own(std::uint32_t t) { toks_[t]->maker.set_inventory(static_cast<double>(ledger_.pos(t)) * 1e-6); }
 
@@ -341,6 +364,7 @@ class Engine {
     std::vector<MarketRules> rules_;
     std::vector<exec::Px> mid_, liq_;  // marks per token for the loss check
     std::uint64_t mismatches_ = 0;
+    exec::Hash64 xh_;
     bool cancelled_all_ = false, in_trade_ = false;
     std::vector<MakerFill>* fill_log_ = nullptr;
     TokenIndex ids_;

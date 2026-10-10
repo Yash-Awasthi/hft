@@ -54,12 +54,12 @@ Step template: do -> check. "Ask" = stop and ask the owner before continuing.
 
 ## E4 pm_exec app
 
-- [ ] E4.1 apps/pm_exec.cpp: replay mode over recording + exec.cfg + seed; event loop A1.
+- [x] E4.1 apps/pm_exec.cpp: replay mode over recording + exec.cfg + seed; event loop A1. Shares the feed, trading loop, recorder and metrics with pm_live through apps/pm_app.hpp (D28); config/exec.cfg is the reference run file.
 - [x] E4.2 Strict config parser (SEC4), hard bounds: src/pm/config.hpp; unknown, repeated, non-numeric, fractional-integer or out-of-bound values refuse the run (6/6 mutations caught). Venue mode now also runs R9 (loss on the worse of mid and best-bid marks), R13 (reject spike) and capital-days every risk tick (4/4 mutations caught); compat mode lifts R13 as the old model had none.
-- [ ] E4.3 Decision hash v2 (A4.2); same seed twice -> same hash; different seed with faults -> different hash.
-- [ ] E4.4 Paper mode on live feed with inline SimVenue (reuse pm_live feed/ring/recorder).
-- [ ] E4.5 Metrics A5 through existing hand-off; kill via SIGUSR1 and KILL file (D11, D13); SEC3 check.
-- [ ] E4.5b Known bug: `pm_arb --help` (any unknown argument) throws filesystem_error uncaught; make all apps reject unknown flags with usage and exit 2.
+- [x] E4.3 Decision hash v2 (A4.2); same seed twice -> same hash; different seed with faults -> different hash. Engine::exec_hash covers intents with risk result, requests, reports, ledger after each report, kill; decision_hash_v2 mixes it with the quote hash. Reference recording, config/exec.cfg: seed 1 twice f6aa89e3b71dadac; with faults 2eca2f516dd4264e twice; seed 2 with faults 21bdd233151e321b.
+- [x] E4.4 Paper mode on live feed with inline SimVenue (reuse pm_live feed/ring/recorder). `pm_exec --paper --run OUT`: a 90 s paper run replays (`pm_exec --replay OUT`) to the same three hashes.
+- [x] E4.5 Metrics A5 through existing hand-off; kill via SIGUSR1 and KILL file (D11, D13); SEC3 check. Kill: both triggers tested on paper runs (all orders cancelled, risk rejects Killed after, kill.log, latch refuses the next start, --reset-kill clears it; replay of the killed run reproduces it). SEC3: port on 127.0.0.1 only (ss -ltnp). A5 not yet: unknown_orders, cancel_races, per-operation latency (E6.1 measures it), leg_* (E5).
+- [x] E4.5b Known bug: `pm_arb --help` (any unknown argument) throws filesystem_error uncaught; make all apps reject unknown flags with usage and exit 2. apps/args.hpp; scripts/check_cli.sh (8 apps failed before, none after; a missing input directory also exits 2).
 - [ ] E4.6 Ask: retire pm_live in favour of pm_exec, or keep both? Default: keep both until E7.
 - G4: replay determinism; 1 h paper run: zero illegal transitions, zero reconcile mismatch; TSan 5 min paper run clean.
 

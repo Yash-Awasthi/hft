@@ -49,6 +49,25 @@ struct OrderIntent {
     std::uint32_t tag;  // strategy's own reference
 };
 
+// Running hash of a sequence of integers, for determinism checks (not cryptographic).
+class Hash64 {
+   public:
+    template <class... T>
+    void add(T... v) {
+        ((h_ = rotl((h_ ^ static_cast<std::uint64_t>(v)) * 0x9e3779b97f4a7c15ull, 27)), ...);
+    }
+    std::uint64_t value() const {
+        std::uint64_t z = h_;  // splitmix64 finaliser
+        z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
+        z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
+        return z ^ (z >> 31);
+    }
+
+   private:
+    static std::uint64_t rotl(std::uint64_t x, int r) { return x << r | x >> (64 - r); }
+    std::uint64_t h_ = 0x243f6a8885a308d3ull;
+};
+
 struct VenueReq {
     enum Kind : std::uint8_t { New, Cancel, Status } kind;  // Status: resend the order's fills, then its state
     Side side;

@@ -14,6 +14,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "args.hpp"
 #include "pm/book.hpp"
 #include "pm/reader.hpp"
 
@@ -125,10 +126,9 @@ class Stats {
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc != 2) {
-        std::fprintf(stderr, "usage: pm_stats <record-dir>\n");
-        return 2;
-    }
+    constexpr const char* usage = "usage: pm_stats <record-dir>";
+    if (argc != 2) return std::fprintf(stderr, "%s\n", usage), 2;
+    if (!hft::app::known_options(argc, argv, {}, usage) || !hft::app::is_dir(argv[1], usage)) return 2;
     const std::filesystem::path root = argv[1];
     std::unordered_map<std::string, Meta> meta;
     {

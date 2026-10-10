@@ -15,6 +15,7 @@ using namespace hft::pm;
 namespace {
 
 constexpr std::int64_t kS = 1'000'000'000;
+constexpr std::int64_t kMs = 1'000'000;
 
 std::string book(const char* id, const char* bid, const char* ask) {
     return std::string(R"({"event_type":"book","asset_id":")") + id + R"(","bids":[{"price":")" + bid +
@@ -210,4 +211,43 @@ TEST(Engine, VenueLossBeyondTheDailyStopTripsTheKillSwitch) {
              {5 * kS, control("_heartbeat", 0)}});
     EXPECT_EQ(e.exec_risk().kill_reason(), hft::exec::KillReason::Loss);  // 11 USD down
     EXPECT_GT(e.ledger().capital_usd_days(), 0);
+}
+
+namespace {
+
+std::uint64_t exec_hash_of(std::uint64_t seed, std::uint32_t settle_fail_ppm, std::uint32_t dup_ppm = 0) {
+    auto p = params();
+    p.venue = true;
+    p.sim.seed = seed;
+    p.sim.lat_in = p.sim.lat_out = 5 * kMs;
+    p.sim.jitter = 3 * kMs;
+    p.sim.settle_delay = 100 * kMs;
+    p.sim.p_settle_fail_ppm = settle_fail_ppm;
+    p.sim.p_dup_ppm = dup_ppm;
+    Engine e(p);
+    feed(e, session());
+    return e.exec_hash();
+}
+
+}  // namespace
+
+TEST(Engine, ExecHashIsAFunctionOfInputConfigAndSeed) {
+    EXPECT_EQ(exec_hash_of(1, 500000), exec_hash_of(1, 500000));
+    EXPECT_NE(exec_hash_of(1, 500000), exec_hash_of(2, 500000));  // jitter and failures drawn differently
+    EXPECT_NE(exec_hash_of(1, 0), exec_hash_of(1, 500000));
+    EXPECT_NE(exec_hash_of(1, 0), exec_hash_of(1, 0, 500000));  // duplicates change only the reports
+}
+
+TEST(Engine, KillRecordTripsTheSwitchCancelsEverythingAndBlocksNewOrders) {
+    auto p = params();
+    p.venue = true;
+    Engine e(p);
+    feed(e, {{kS, book("A", "0.48", "0.52")}, {kS + 1, trade("A", "SELL", "0.48", "600")}});  // bid and ask resting
+    ASSERT_EQ(e.oms().open_orders(), 2u);
+    feed(e, {{2 * kS, control("_kill", -1)}});
+    EXPECT_EQ(e.exec_risk().kill_reason(), hft::exec::KillReason::Operator);
+    EXPECT_EQ(e.oms().open_orders(), 0u);
+    const auto orders = e.venue_stats().orders;
+    feed(e, {{3 * kS, change("A", "BUY", "0.50", "10")}, {4 * kS, change("A", "SELL", "0.51", "10")}});
+    EXPECT_EQ(e.venue_stats().orders, orders);
 }

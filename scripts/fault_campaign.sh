@@ -7,6 +7,6 @@ base="--venue-compat --lat-ms 50 --jitter-ms 20 --k 3000 --gamma 0.01 --size 10"
 for f in "" "--drop-ack 0.2" "--drop-fill 0.2" "--dup 0.2" "--settle-fail 0.2" "--disconnect 120:8"; do
   out=$($B --replay $R $base $f --seed 7 2>&1 >/dev/null)
   echo "[${f:-none}]"
-  echo "$out" | grep -o "paper_fills [0-9]*\|decision_hash [0-9a-f]*" | tr "\n" " "; echo
+  echo "$out" | grep "^events" | grep -o "paper_fills [0-9]*\|decision_hash [0-9a-f]*" | tr "\n" " "; echo
   echo "$out" | grep "^venue" | sed "s/^venue //"
 done
