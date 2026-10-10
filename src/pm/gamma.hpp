@@ -3,6 +3,8 @@
 // Market and event discovery through the exchange's public metadata API (REST, JSON).
 
 #include <cctype>
+#include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <ctime>
 #include <set>
@@ -19,10 +21,24 @@ inline constexpr const char* kGammaHost = "gamma-api.polymarket.com";
 inline constexpr const char* kWsHost = "ws-subscriptions-clob.polymarket.com";
 inline constexpr const char* kWsPath = "/ws/market";
 
+// A market's order rules and fee schedule as the metadata API states them. Units: tick in
+// 1e-4 price units (0 = unknown, use the book's), min_qty in 1e-6 shares. Defaults are for
+// recordings made before these were kept: the documented 5-share minimum and the general fee.
+struct MarketRules {
+    std::int32_t tick = 0;
+    std::int64_t min_qty = 5'000'000;
+    bool neg_risk = false;
+    bool fees = true;                    // takers pay rate * (p (1 - p))^exp per share
+    std::uint32_t fee_rate_ppm = 50'000;
+    std::uint8_t fee_exp = 1;
+    std::uint16_t delay_ms = 0;          // matching delay for marketable orders
+};
+
 struct Market {
     std::string tag, slug, condition, end, title;
     std::vector<std::pair<std::string, std::string>> tokens;  // token id, outcome label
     bool open = true;                                          // not closed, has a book, takes orders
+    MarketRules rules;
 };
 
 struct EventInfo {
@@ -68,12 +84,22 @@ inline std::vector<std::string> string_array(const net::Json& m, const char* key
 }
 
 inline Market market_from(const net::Json& m, const std::string& tag) {
-    Market mk{tag, m.str("slug"), m.str("conditionId"), m.str("endDate"), m.str("groupItemTitle"), {}, true};
+    Market mk{tag, m.str("slug"), m.str("conditionId"), m.str("endDate"), m.str("groupItemTitle"), {}, true, {}};
     const auto ids = string_array(m, "clobTokenIds");
     const auto names = string_array(m, "outcomes");
     for (std::size_t i = 0; i < ids.size(); ++i) mk.tokens.emplace_back(ids[i], i < names.size() ? names[i] : std::to_string(i));
     mk.open = !m.flag("closed") && m.flag("active") && m.flag("enableOrderBook") && m.flag("acceptingOrders") &&
               !mk.tokens.empty();
+    MarketRules& r = mk.rules;
+    if (const double t = m.num("orderPriceMinTickSize"); t > 0 && t <= 0.1) r.tick = static_cast<std::int32_t>(std::lround(t * 1e4));
+    if (const double q = m.num("orderMinSize"); q > 0 && q < 1e6) r.min_qty = std::llround(q * 1e6);
+    r.neg_risk = m.flag("negRisk");
+    if (m.find("feesEnabled")) r.fees = m.flag("feesEnabled");
+    if (const net::Json* f = m.find("feeSchedule"); f && f->type == net::Json::Type::Obj) {
+        if (const double rate = f->num("rate"); rate >= 0 && rate < 1) r.fee_rate_ppm = static_cast<std::uint32_t>(std::lround(rate * 1e6));
+        if (const double e = f->num("exponent"); e >= 0 && e <= 4) r.fee_exp = static_cast<std::uint8_t>(e);
+    }
+    if (const double d = m.num("secondsDelay"); d > 0 && d < 60) r.delay_ms = static_cast<std::uint16_t>(std::lround(d * 1000));
     return mk;
 }
 

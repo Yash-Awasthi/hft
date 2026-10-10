@@ -17,7 +17,7 @@ Step template: do -> check. "Ask" = stop and ask the owner before continuing.
 
 ## E1 Types, ledger, risk
 
-- [ ] E1.0 Session file gains market category, neg_risk, min_order_size, tick (from Gamma/book) for D18, F8; recorded sessions without them get defaults (category Other, min 5, tick from book).
+- [x] E1.0 (see commit) Session file gains market category, neg_risk, min_order_size, tick (from Gamma/book) for D18, F8; recorded sessions without them get defaults (category Other, min 5, tick from book).
 - [ ] E1.1 `.gitignore` secret patterns (SEC7).
 - [ ] E1.2 src/exec/types.hpp (T1..T7) + static_asserts.
 - [ ] E1.3 Ledger tests first (L2 identity property, L4 settlement, L3 capital-days), then src/exec/ledger.hpp.

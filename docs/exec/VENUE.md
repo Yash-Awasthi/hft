@@ -32,6 +32,8 @@ Status per fact: V = verified from docs; M = measured here; U = uncertain or con
 - F19 U One source shows fee = C * p * feeRate * (p(1-p))^exponent with per-category exponents (crypto exp 2, sports 0.03 exp 1, March 2026 schedule). Current fees page has no exponent. Use F17; make the formula a config switch.
 - F20 V Per-market fee check: GET clob.polymarket.com/fee-rate?token_id=...
 
+- F20b V Gamma market fields (2026-10-10, 40 top events): feeType (e.g. sports_fees_v3, politics_fees, crypto_fees_v2, culture_fees, weather_fees, finance_prices_fees, economics_fees, sports_fees_nfl_cfb_oct26), feeSchedule {exponent 1, rate 0.03-0.07, takerOnly true, rebateRate 0.15-0.25}, feesEnabled false on some (e.g. geopolitics, an election), secondsDelay 1 on sports game markets, orderMinSize 5, orderPriceMinTickSize 0.001 or 0.01. -> D24.
+
 ## Rate limits (answers Q7)
 
 - F21 V Per signer, sliding windows: POST /order 5000/10 s burst, 48000/10 min sustained; DELETE /order same; POST /orders 1500/10 s, 21000/10 min; DELETE /orders 1000/10 s (changelog says 2000, U), 15000/10 min; DELETE /cancel-all 250/10 s, 6000/10 min. Tiered by 30-day maker volume. Source: /api-reference/trading-rate-limits.

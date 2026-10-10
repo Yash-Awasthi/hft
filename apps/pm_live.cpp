@@ -93,7 +93,7 @@ Session discover(const Options& o) {
         if (open.size() < 2 || static_cast<int>(s.tokens.size() + n) > o.max_tokens) continue;
         Session::Group all{ev.slug, {}};
         for (const Market* m : open) {
-            for (const auto& [id, outcome] : m->tokens) s.tokens.push_back({id, (m->title.empty() ? m->slug : m->title) + " " + outcome, 0});
+            for (const auto& [id, outcome] : m->tokens) s.tokens.push_back({id, (m->title.empty() ? m->slug : m->title) + " " + outcome, 0, m->rules});
             all.ids.push_back(m->tokens[0].first);  // Yes
             s.groups.push_back({m->slug, {m->tokens[0].first, m->tokens[1].first}});
         }

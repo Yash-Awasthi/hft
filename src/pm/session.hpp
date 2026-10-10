@@ -31,6 +31,7 @@ struct Session {
     struct Tok {
         std::string id, label;
         int conn = 0;
+        MarketRules rules;
     };
     struct Group {
         std::string name;
@@ -48,7 +49,11 @@ struct Session {
 
     void save(const std::filesystem::path& p) const {
         std::ofstream f(p);
-        for (const Tok& t : tokens) f << "token\t" << t.id << '\t' << t.conn << '\t' << field(t.label) << '\n';
+        for (const Tok& t : tokens) {
+            const MarketRules& r = t.rules;
+            f << "token\t" << t.id << '\t' << t.conn << '\t' << field(t.label) << '\t' << r.tick << '\t' << r.min_qty << '\t'
+              << r.neg_risk << '\t' << r.fees << '\t' << r.fee_rate_ppm << '\t' << int{r.fee_exp} << '\t' << r.delay_ms << '\n';
+        }
         for (const Group& g : groups) {
             f << "group\t" << field(g.name);
             for (const auto& id : g.ids) f << '\t' << id;
@@ -63,7 +68,20 @@ struct Session {
             std::vector<std::string> c;
             std::stringstream ss(line);
             for (std::string x; std::getline(ss, x, '\t');) c.push_back(x);
-            if (c.size() >= 4 && c[0] == "token") s.tokens.push_back({c[1], c[3], std::atoi(c[2].c_str())});
+            if (c.size() >= 4 && c[0] == "token") {
+                Tok t{c[1], c[3], std::atoi(c[2].c_str()), {}};
+                if (c.size() >= 11) {  // files written before the rules were kept have 4 fields
+                    MarketRules& r = t.rules;
+                    r.tick = std::atoi(c[4].c_str());
+                    r.min_qty = std::atoll(c[5].c_str());
+                    r.neg_risk = c[6] == "1";
+                    r.fees = c[7] == "1";
+                    r.fee_rate_ppm = static_cast<std::uint32_t>(std::atol(c[8].c_str()));
+                    r.fee_exp = static_cast<std::uint8_t>(std::atoi(c[9].c_str()));
+                    r.delay_ms = static_cast<std::uint16_t>(std::atoi(c[10].c_str()));
+                }
+                s.tokens.push_back(std::move(t));
+            }
             else if (c.size() >= 3 && c[0] == "group") s.groups.push_back({c[1], {c.begin() + 2, c.end()}});
         }
         return s;
