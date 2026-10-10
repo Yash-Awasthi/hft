@@ -37,7 +37,7 @@ Step template: do -> check. "Ask" = stop and ask the owner before continuing.
 
 - [ ] E3.1 Matching V1..V7 with unit tests on constructed books (taker walk, overlay clear, maker ahead, Fok/Fak/Gtc, fees, rule rejects).
 - [ ] E3.2 Invariants V15..V17 as always-on checks in tests and debug builds.
-- [ ] E3.3 Faults V8..V14 with Philox; each fault forced on in a test.
+- [ ] E3.3 Faults (D14): core V9, V10, V11, V14 with Philox, each forced on in a test; V8, V12, V13 optional.
 - [ ] E3.4 Parity G3b prep: run maker on reference recording, old path, dump fills (ns, token, px, qty) to file.
 - [ ] E3.5 Maker quotes become intents (A2.7); fills via SimVenue with latency 0, faults off; compare dump: must be identical.
 - Ask if parity is not exact after one day of investigation (stop condition).
@@ -49,7 +49,7 @@ Step template: do -> check. "Ask" = stop and ask the owner before continuing.
 - [ ] E4.2 Strict config parser (SEC4), hard bounds.
 - [ ] E4.3 Decision hash v2 (A4.2); same seed twice -> same hash; different seed with faults -> different hash.
 - [ ] E4.4 Paper mode on live feed with inline SimVenue (reuse pm_live feed/ring/recorder).
-- [ ] E4.5 Metrics A5 through existing hand-off; `POST /kill`, SIGUSR1, KILL file (D11); SEC3/SEC8 checks.
+- [ ] E4.5 Metrics A5 through existing hand-off; kill via SIGUSR1 and KILL file (D11, D13); SEC3 check.
 - [ ] E4.6 Ask: retire pm_live in favour of pm_exec, or keep both? Default: keep both until E7.
 - G4: replay determinism; 1 h paper run: zero illegal transitions, zero reconcile mismatch; TSan 5 min paper run clean.
 
@@ -57,17 +57,19 @@ Step template: do -> check. "Ask" = stop and ask the owner before continuing.
 
 - [ ] E5.1 Unit tests on constructed books: X2 filters, X3 net edge, X4 sizing, X7 complete vs unwind choice, R10/R15 bounds.
 - [ ] E5.2 src/exec/arb_exec.hpp, policies P and Q (X5), X9 one attempt per group.
-- [ ] E5.3 Fault campaign: leg faults (V9, V10, V13, V14 on one leg) at high rate on reference recording: every incomplete set completed, unwound, or frozen within bounds; no silent residual.
+- [ ] E5.3 Fault campaign: leg faults (V9, V10, V11, V14 on one leg) at high rate on reference recording: every incomplete set completed, unwound, or frozen within bounds; no silent residual.
 - G5: all above.
 
-## E6 Report
+## E6 Demo and benchmarks (D12)
 
-- [ ] E6.1 Split recordings by date: earlier half = tune, later half = evaluate (D9). List the split in the report.
-- [ ] E6.2 Tune A_min, S_fresh, E_min, slip_ticks on the tune half only; freeze in `docs/exec/frozen.cfg` with commit id.
-- [ ] E6.3 Evaluate once on the later half: per policy (P, Q) x latency (D4): windows seen, filtered by filter, attempted, completed, incomplete by action, net PnL after fees, capital-days, PnL per capital-day. Plus maker results through the OMS.
-- [ ] E6.4 Write docs/exec/REPORT.md with the command line and seed that reproduce every number and the V-limits.
-- Ask before re-running evaluation with any change (invalidates the result, D9).
-- G6: report reproducible from its command lines.
+- [ ] E6.1 Benchmarks on the reference recording (native, pinned): per-stage latency p50/p99/p99.9 (parse, engine, risk, OMS, sim), messages/s, intent-to-request p99; table in docs/exec/RESULTS.md with the command for each row.
+- [ ] E6.2 Demo scripts in `scripts/demo/`, each one command, printing a known decision hash:
+  (a) clean replay with maker + arb;
+  (b) replay with core faults on: OMS reaches Unknown, reconciles, ledger mismatch zero;
+  (c) leg-risk incident: one leg dropped, executor completes or unwinds within bound;
+  (d) kill switch: trip by KILL file mid-run, all orders cancelled, no new orders, kill.log written.
+- [ ] E6.3 pm_exec summary output: arb windows seen / filtered (by filter) / attempted / completed / incomplete (by action), maker fills, net PnL after fees, at measured RTT and 50/150/300 ms (D4). Record in RESULTS.md as measured, with the V-limits.
+- G6: every number in RESULTS.md reproducible from its command line; every demo prints its expected hash.
 
 ## E7 Hardening
 
@@ -81,4 +83,4 @@ Step template: do -> check. "Ask" = stop and ask the owner before continuing.
 - A venue fact breaks the design (E0) -> ask.
 - Parity not exact (E3) -> ask.
 - Determinism or invariant failure not understood the same day -> stop, report.
-- E6 shows no actionable windows -> that is the result; report it.
+- E6.3 shows no actionable windows -> that is the measured output; record it, no threshold fishing.

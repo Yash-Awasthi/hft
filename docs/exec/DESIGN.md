@@ -84,7 +84,8 @@ Matching:
 
 Faults (each config prob or schedule; Philox, seed in exec.cfg):
 
-- V8 spurious reject; V9 drop ack; V10 drop fill report (fill happened; found at reconcile); V11 duplicate report; V12 reorder (cancel ack before earlier fill); V13 delay > OMS timeout; V14 disconnect T s (reports after reconnect in order, or lost -> reconcile).
+- Core (D14): V9 drop ack; V10 drop fill report (fill happened; found at reconcile); V11 duplicate report; V14 disconnect T s (reports after reconnect in order, or lost -> reconcile).
+- Optional: V8 spurious reject; V12 reorder (cancel ack before earlier fill); V13 delay > OMS timeout.
 
 Invariants (checked every event; abort in tests):
 
@@ -98,7 +99,7 @@ Limits (print in every report): L2 has no order ids (queue estimated); others do
 
 - X1 Trigger: scanner window, buy side only (D10).
 - X2 Filters (all must pass; count each rejection by filter): window age >= A_min ms; every leg book updated within S_fresh ms; no leg token frozen; net edge >= E_min.
-- X3 Net edge = gross - sum taker fees - legs * slip_ticks - latency allowance (expected adverse move over RTT, estimated per group from earlier-half data, D9).
+- X3 Net edge = gross - sum taker fees - legs * slip_ticks - latency allowance (config, ticks; D12).
 - X4 Size = floor_step(min(thinnest leg displayed, group cap D3, cash / set cost)); skip if < venue min.
 - X5 Policy P (Parallel): all legs Fak at window px at once. Policy Q (seQuential): thinnest leg Fok first; on fill, rest Fak.
 - X6 Completion check after all leg reports or T_leg timeout.

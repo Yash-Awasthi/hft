@@ -65,8 +65,6 @@ cycle counts come from Cachegrind and `rdtscp`.
 
 - Feed path: decode WebSocket frames straight into the ring (no `std::string` copy) and
   stamp receipt with the kernel's socket timestamp, so wire-to-decision starts at the wire.
-- ITCH: table lookup for message lengths, cheaper empty-overflow checks in the book's best
-  price, batch-timed throughput next to the per-event figures.
 - Build: system zstd, LZ4, zlib-ng and OpenSSL instead of vcpkg; benchmarks on `rdtsc`.
 - Execution layer (no live orders): docs/exec/INDEX.md. Order state machine,
   idempotent client ids, risk, kill switch, simulated venue with faults, arbitrage executor.

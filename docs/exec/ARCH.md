@@ -19,7 +19,7 @@ clock record (100 ms) ---------------------+         |
 ```
 
 - A1.1 Everything above runs on the trading thread. No other thread touches books, OMS, ledger, risk.
-- A1.2 Other threads: feed (live only, existing), recorder (existing), HTTP (existing; renders metrics from the hand-off, accepts `POST /kill` -> sets an atomic flag the loop reads once per iteration).
+- A1.2 Other threads: feed (live only, existing), recorder (existing), HTTP (existing, read-only metrics). Kill triggers (SIGUSR1, KILL file) set an atomic flag the loop reads once per iteration (D11, D13).
 - A1.3 Time: event-loop receive clock `Ns`; SimVenue times are `recv_ns + drawn latency`. No wall-clock reads inside components.
 
 ## A2 Modules and files

@@ -15,14 +15,18 @@ Format: id, decision, why. Change a decision only by adding a new id that supers
 - D6 No Venue interface/abstraction: SimVenue is the only venue (D1). Called directly. Why: one implementation, no indirection.
 - D7 SimVenue runs inline on the trading thread, scheduled by `engine::EventQueue` (existing; kinds Market < MarketData < OrderArrival < Report at equal time). Why: deterministic, conservative tie-break, already tested.
 - D8 Reuse map (confirm at E0.2): `engine/scheduler.hpp` as is; `backtest/risk.hpp` and `backtest/accounting.hpp` ideas, re-typed for Px/Qty/Usd (they are ITCH-typed: uint32 price, book::Side); `core/philox.hpp` for fault draws; `core/pool.hpp` + `book/id_map.hpp` LinearMap for order table; `core/histogram.hpp` for latency metrics; pm_live metrics hand-off (`Metrics::offer/fold`) for new metrics.
-- D9 Thresholds for the arb executor are tuned on the earlier half of recordings by date and frozen before the evaluation run on the later half. Why: no tuning on evaluation data.
+- D9 (superseded by D12)
 - D10 Sell-side arb windows (bids sum > 1) are reported, not executed. Why: needs minting full sets on the conditional-token contract, unmodelled.
-- D11 Kill switch reset is never automatic and never via HTTP. Trip via: any risk rule, `POST /kill` on 127.0.0.1, SIGUSR1, or file `<run_dir>/KILL`. Reset: restart with `--reset-kill` after reading the kill log. Why: tripping is the safe direction; reset needs a human.
+- D11 Kill switch reset is never automatic. Trip via: any risk rule, SIGUSR1, or file `<run_dir>/KILL` (D13: no HTTP trigger). Reset: restart with `--reset-kill` after reading the kill log. Why: tripping is the safe direction; reset needs a human.
+- D12 Engineering project, not research. Success = correctness (oracles, invariants), determinism (hash), latency budgets met, faults handled, runnable demos. Arb/maker PnL is system output, reported as measured; thresholds are plain config, no tune/evaluate split. Why: owner 2026-10-10.
+- D13 No new web surface: HTTP stays read-only metrics + existing dashboard, frozen. No `POST` endpoints. Why: focus (owner).
+- D14 Faults: core four required (V9 drop ack, V10 drop fill, V11 duplicate, V14 disconnect); V8, V12, V13 optional, only if time allows. Why: the four cover every OMS recovery path.
+- D15 ITCH side frozen: no further work on ITCH replay/book/backtest beyond keeping tests green. Why: focus on the execution layer.
 
 ## Open (owner)
 
 - Q1 D3 mapping OK? (capital 1M, 0.1% per attempt, 2% daily). Default: proceed with D3.
-- Q2 After E6, if result is negative: stop the line of work, or try maker-only analysis? Default: report and stop.
+- Q2 Deadline for the project? Decides whether E6 demos and E7 fit fully. Default: plan as written, cut optional items first.
 
 ## Open (resolve in E0, record answer here)
 
