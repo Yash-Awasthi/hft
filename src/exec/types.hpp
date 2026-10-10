@@ -50,7 +50,7 @@ struct OrderIntent {
 };
 
 struct VenueReq {
-    enum Kind : std::uint8_t { New, Cancel } kind;
+    enum Kind : std::uint8_t { New, Cancel, Status } kind;  // Status: resend the order's fills, then its state
     Side side;
     Tif tif;
     bool post_only;
@@ -62,7 +62,8 @@ struct VenueReq {
 
 struct VenueRpt {
     enum Kind : std::uint8_t { Ack, Reject, Fill, CancelAck, CancelReject, Expired, Status, Settled, SettleFailed } kind;
-    enum Venue : std::uint8_t { None, Live, Matched, Delayed, Unmatched } status;  // on Ack (VENUE F9, F10)
+    // On Ack: Live, Matched, Delayed, Unmatched (VENUE F9, F10). On Status: Live, Filled, Cancelled, NotFound.
+    enum Venue : std::uint8_t { None, Live, Matched, Delayed, Unmatched, Filled, Cancelled, NotFound } status;
     std::uint16_t reason;
     Px px;
     Qty qty;
