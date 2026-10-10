@@ -78,11 +78,12 @@ struct Session {
 // Writes every record the trading thread processed, in its order, as "<ns> <json>" lines in
 // hourly files (by receive time) under DIR/c0, compressing each when its hour ends. One
 // connection directory, so a replay sees exactly the live order. Writing stops, and trading
-// goes on, once the directory reaches the size cap.
+// goes on, once the directory reaches the size cap, or once the ring fills because the disk
+// fell behind: the trading thread never waits, and what was written stays a valid prefix.
 class Recorder {
    public:
-    Recorder(const std::filesystem::path& dir, double cap_gb)
-        : dir_(dir), cap_(static_cast<std::uintmax_t>(cap_gb * 1e9)), ring_(1 << 24) {
+    Recorder(const std::filesystem::path& dir, double cap_gb, std::size_t ring_bytes = 1 << 24)
+        : dir_(dir), cap_(static_cast<std::uintmax_t>(cap_gb * 1e9)), ring_(ring_bytes) {
         std::filesystem::create_directories(dir / "c0");
         thread_ = std::thread([this] { run(); });
     }
@@ -92,9 +93,12 @@ class Recorder {
         rotate(-1);
     }
     void write(std::int64_t ns, std::string_view text) {
-        while (!ring_.try_write(ns, 0, 0, text)) std::this_thread::yield();
+        if (overflowed_ || ring_.try_write(ns, 0, 0, text)) return;
+        overflowed_ = true;
+        std::fprintf(stderr, "recording stopped: the recorder fell behind\n");
     }
     bool capped() const { return capped_; }
+    bool overflowed() const { return overflowed_; }
 
    private:
     void run() {
@@ -158,6 +162,7 @@ class Recorder {
     std::int64_t hour_ = -1;
     std::atomic<bool> done_{false};
     std::atomic<bool> capped_{false};
+    bool overflowed_ = false;  // trading thread only
     std::thread thread_;
 };
 

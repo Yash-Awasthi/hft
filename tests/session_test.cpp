@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -63,4 +65,23 @@ TEST(Recorder, StopsWritingAtTheCap) {
         r.write(1, "{}");
     }
     EXPECT_TRUE(std::filesystem::is_empty(dir.path / "c0"));
+}
+
+TEST(Recorder, StopsInsteadOfBlockingWhenItsRingIsFull) {
+    TempDir dir("pm_recorder_full");
+    const std::string text(1000, 'x');
+    std::size_t n = 0;
+    {
+        Recorder r(dir.path, 1.0, 1 << 14);
+        const auto t0 = std::chrono::steady_clock::now();
+        while (!r.overflowed() && n < 1000000) r.write(1, text), ++n;
+        EXPECT_TRUE(r.overflowed());
+        EXPECT_LT(std::chrono::steady_clock::now() - t0, std::chrono::seconds(1));
+    }
+    std::size_t lines = 0;
+    stream_record_file(std::filesystem::directory_iterator(dir.path / "c0")->path(), [&](std::string_view d) {
+        lines += static_cast<std::size_t>(std::count(d.begin(), d.end(), '\n'));
+    });
+    EXPECT_LT(lines, n);  // a prefix: everything written before the ring filled
+    EXPECT_GT(lines, 0u);
 }
