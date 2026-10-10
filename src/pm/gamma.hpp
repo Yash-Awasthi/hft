@@ -97,7 +97,7 @@ inline Market market_from(const net::Json& m, const std::string& tag) {
     if (m.find("feesEnabled")) r.fees = m.flag("feesEnabled");
     if (const net::Json* f = m.find("feeSchedule"); f && f->type == net::Json::Type::Obj) {
         if (const double rate = f->num("rate"); rate >= 0 && rate < 1) r.fee_rate_ppm = static_cast<std::uint32_t>(std::lround(rate * 1e6));
-        if (const double e = f->num("exponent"); e >= 0 && e <= 4) r.fee_exp = static_cast<std::uint8_t>(e);
+        if (const double e = f->num("exponent"); e >= 0 && e <= 2) r.fee_exp = static_cast<std::uint8_t>(e);
     }
     if (const double d = m.num("secondsDelay"); d > 0 && d < 60) r.delay_ms = static_cast<std::uint16_t>(std::lround(d * 1000));
     return mk;
