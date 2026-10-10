@@ -5,7 +5,7 @@
 set -u
 dir=${1:?data dir}
 shift
-bin="$(cd "$(dirname "$0")/.." && pwd)/build/native/apps/pm_live"
+bin=${PM_LIVE_BIN:-"$(cd "$(dirname "$0")/.." && pwd)/build/native/apps/pm_live"}
 mkdir -p "$dir"
 # One supervisor per directory: a second start (another logon) exits at once.
 exec 9>"$dir/.supervisor.lock"

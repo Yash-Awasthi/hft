@@ -4,7 +4,7 @@
 set -u
 dir=${1:?data dir}
 shift
-bin="$(cd "$(dirname "$0")/.." && pwd)/build/release/apps/pm_record"
+bin=${PM_RECORD_BIN:-"$(cd "$(dirname "$0")/.." && pwd)/build/release/apps/pm_record"}
 mkdir -p "$dir"
 # One supervisor per directory: a second start (another logon) exits at once.
 exec 9>"$dir/.supervisor.lock"
