@@ -6,16 +6,12 @@ README "Performance"; the research-phase log is in
 
 ## Running
 
-Auto-start at logon is off since 2026-10-10: `C:\Users\Yash\hft\pm_start.ps1` does
-nothing; copy `pm_start.ps1.on` over it to turn it back on. Started by hand until then:
+Nothing. Recorder and `pm_live` were stopped on 2026-10-10 and nothing starts at logon
+(`C:\Users\Yash\hft\pm_start.ps1` does nothing; `pm_start.ps1.on` is the old version).
+Their recordings stay in `~/data/pm` and `~/data/pm-live`. To run them by hand:
 
-- Recorder (`pm_record`): 32 markets (64 tokens), hourly
-  zstd files in `~/data/pm`, 50 GB cap, health in `status.json`.
-- `pm_live` under `scripts/pm_live_supervise.sh ~/data/pm-live --record-cap-gb 20 --port 8088
-  --seconds 21600`, or through `pm_start.vbs`, which starts both inside WSL with no
-  window (earlier versions: `pm_start.ps1.bak`, `.bak2`). Lock files keep each supervisor
-  to one copy; the recorder's console output goes to `~/data/pm/console.log`. Dashboard at http://127.0.0.1:8088/. To stop it, kill the
-  supervisor first, then `pm_live`.
+    scripts/pm_supervise.sh ~/data/pm --cap-gb 50 --per-tag 8
+    scripts/pm_live_supervise.sh ~/data/pm-live --record-cap-gb 20 --port 8088 --seconds 21600
 
 ## Open
 
