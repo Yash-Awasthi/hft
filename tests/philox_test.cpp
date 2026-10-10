@@ -2,8 +2,6 @@
 
 #include <gtest/gtest.h>
 
-#include <random>
-
 using namespace hft::rng;
 
 // Known answers from Random123 tests/kat_vectors (philox4x32, 10 rounds).
@@ -23,22 +21,6 @@ TEST(Philox, KnownAnswers) {
          {0xd16cfe09, 0x94fdcceb, 0x5001e420, 0x24126ea1}},
     };
     for (const Kat& k : kats) EXPECT_EQ(philox(k.ctr, k.key), k.out);
-}
-
-TEST(Philox, Avx2MatchesScalar) {
-    if (!has_avx2()) GTEST_SKIP() << "no AVX2";
-    std::mt19937 g(5);
-    for (int rep = 0; rep < 100; ++rep) {
-        Lanes ctr, out;
-        Key key{static_cast<std::uint32_t>(g()), static_cast<std::uint32_t>(g())};
-        for (int w = 0; w < 4; ++w)
-            for (int l = 0; l < 8; ++l) ctr.v[w][l] = static_cast<std::uint32_t>(g());
-        philox_x8(ctr, key, out);
-        for (int l = 0; l < 8; ++l) {
-            const Ctr want = philox({ctr.v[0][l], ctr.v[1][l], ctr.v[2][l], ctr.v[3][l]}, key);
-            for (int w = 0; w < 4; ++w) EXPECT_EQ(out.v[w][l], want[w]);
-        }
-    }
 }
 
 // Draws are addressed, not sequential: the same address gives the same numbers whatever

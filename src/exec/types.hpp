@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <type_traits>
 
-#include "pm/gamma.hpp"
+#include "pm/rules.hpp"
 
 namespace hft::exec {
 

@@ -251,11 +251,11 @@ class Decoder {
     // zero-byte test is exact, so ctz finds it.
     static const char* quote_or_escape(const char* p, const char* e) {
 #ifdef __AVX2__
-        const __m256i qv = _mm256_set1_epi8('"'), bv = _mm256_set1_epi8('\\');
+        using V32 = char __attribute__((vector_size(32)));
         for (; e - p >= 32; p += 32) {
-            const __m256i x = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p));
-            if (const auto m = static_cast<std::uint32_t>(
-                    _mm256_movemask_epi8(_mm256_or_si256(_mm256_cmpeq_epi8(x, qv), _mm256_cmpeq_epi8(x, bv)))))
+            V32 x;
+            __builtin_memcpy(&x, p, 32);
+            if (const auto m = static_cast<std::uint32_t>(__builtin_ia32_pmovmskb256((x == '"') | (x == '\\'))))
                 return p + __builtin_ctz(m);
         }
 #endif

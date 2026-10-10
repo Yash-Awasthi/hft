@@ -170,7 +170,9 @@ TEST(Alloc, SteadyStateOrderFlowDoesNotAllocate) {
 
 TEST(Alloc, CounterSeesAllocations) {
     const std::uint64_t news = g_news;
-    auto* v = new std::vector<int>(10);
-    delete v;
-    EXPECT_GE(g_news - news, 2u);
+    // A direct call: a new-expression whose result is unused may be elided under LTO.
+    void* p = ::operator new(64);
+    asm volatile("" : : "r"(p) : "memory");
+    ::operator delete(p);
+    EXPECT_EQ(g_news - news, 1u);
 }

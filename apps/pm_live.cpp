@@ -568,7 +568,7 @@ int live(const Options& o) {
             // same path so a replay sees it too.
             const std::int64_t wall = now_ns();
             if (wall - last_clock >= 100'000'000) process(wall, 0, clock), last_clock = wall;
-            if (o.spin || ++idle < 256) _mm_pause();
+            if (o.spin || ++idle < 256) __builtin_ia32_pause();
             else bell.wait(rung, std::max<long>(1, (last_clock + 100'000'000 - wall) / 1000));
         } else {
             idle = 0;

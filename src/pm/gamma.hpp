@@ -14,25 +14,13 @@
 
 #include "net/json.hpp"
 #include "net/tls.hpp"
+#include "pm/rules.hpp"
 
 namespace hft::pm {
 
 inline constexpr const char* kGammaHost = "gamma-api.polymarket.com";
 inline constexpr const char* kWsHost = "ws-subscriptions-clob.polymarket.com";
 inline constexpr const char* kWsPath = "/ws/market";
-
-// A market's order rules and fee schedule as the metadata API states them. Units: tick in
-// 1e-4 price units (0 = unknown, use the book's), min_qty in 1e-6 shares. Defaults are for
-// recordings made before these were kept: the documented 5-share minimum and the general fee.
-struct MarketRules {
-    std::int32_t tick = 0;
-    std::int64_t min_qty = 5'000'000;
-    bool neg_risk = false;
-    bool fees = true;                    // takers pay rate * (p (1 - p))^exp per share
-    std::uint32_t fee_rate_ppm = 50'000;
-    std::uint8_t fee_exp = 1;
-    std::uint16_t delay_ms = 0;          // matching delay for marketable orders
-};
 
 struct Market {
     std::string tag, slug, condition, end, title;

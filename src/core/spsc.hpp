@@ -4,16 +4,14 @@
 // line and keeps a cached copy of the other side's, so the shared line is read only when
 // the ring looks full (producer) or empty (consumer).
 
-#include <immintrin.h>
+#include <sched.h>
 
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <memory>
+#include <new>
 #include <string_view>
-#include <thread>
-#include <utility>
 
 namespace hft {
 
@@ -28,7 +26,7 @@ class SpscRing {
             head_cache_ = head_.load(std::memory_order_acquire);
             if (t - head_cache_ == N) return false;
         }
-        slots_[t & (N - 1)] = std::move(v);
+        slots_[t & (N - 1)] = static_cast<T&&>(v);
         tail_.store(t + 1, std::memory_order_release);
         return true;
     }
@@ -39,7 +37,7 @@ class SpscRing {
             tail_cache_ = tail_.load(std::memory_order_acquire);
             if (h == tail_cache_) return false;
         }
-        out = std::move(slots_[h & (N - 1)]);
+        out = static_cast<T&&>(slots_[h & (N - 1)]);
         head_.store(h + 1, std::memory_order_release);
         return true;
     }
@@ -56,8 +54,8 @@ class SpscRing {
 
    private:
     static void wait(int spins) {
-        if (spins < 64) _mm_pause();
-        else std::this_thread::yield();
+        if (spins < 64) __builtin_ia32_pause();
+        else sched_yield();
     }
 
     alignas(64) std::atomic<std::size_t> head_{0};  // next slot to read; written by the consumer

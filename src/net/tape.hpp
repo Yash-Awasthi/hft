@@ -4,15 +4,13 @@
 // Stage 1 finds structural characters 64 bytes at a time (AVX2 compares, escaped quotes
 // by the odd-backslash-run rule, string interiors by a carry-less multiply prefix xor);
 // stage 2 walks only those positions. Strings stay as views into the input with escapes
-// unresolved; `decode` resolves them when needed.
-
-#include <immintrin.h>
+// unresolved; `decode` resolves them when needed. SIMD through GCC vector types and builtins,
+// not <immintrin.h>, which alone costs every includer ~55k preprocessed lines.
 
 #include <charconv>
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
-#include <memory>
 #include <string>
 #include <string_view>
 
@@ -104,15 +102,20 @@ class JsonTape {
     void use_simd(bool on) { simd_ = on && __builtin_cpu_supports("avx2") && __builtin_cpu_supports("pclmul"); }
 
    private:
-    // Growable array whose push does not check capacity; callers reserve first.
+    // Growable array of trivially copyable T whose push does not check capacity; callers
+    // reserve first.
     template <class T>
     class Buf {
        public:
+        Buf() = default;
+        Buf(const Buf&) = delete;
+        Buf& operator=(const Buf&) = delete;
+        ~Buf() { std::free(d_); }
         void reserve(std::size_t n) {
             if (n <= cap_) return;
-            auto d = std::make_unique_for_overwrite<T[]>(n);
-            if (n_) std::memcpy(d.get(), d_.get(), n_ * sizeof(T));
-            d_ = std::move(d), cap_ = n;
+            void* d = std::realloc(d_, n * sizeof(T));
+            if (!d) std::abort();
+            d_ = static_cast<T*>(d), cap_ = n;
         }
         void clear() { n_ = 0; }
         void push_back(const T& v) { d_[n_++] = v; }
@@ -121,7 +124,7 @@ class JsonTape {
         const T& operator[](std::size_t i) const { return d_[i]; }
 
        private:
-        std::unique_ptr<T[]> d_;
+        T* d_ = nullptr;
         std::size_t n_ = 0, cap_ = 0;
     };
 
@@ -231,36 +234,40 @@ class JsonTape {
         return str_carry_ == 0;
     }
 
+    using V32 = char __attribute__((vector_size(32)));
+    using V2 = long long __attribute__((vector_size(16)));
+
     __attribute__((target("pclmul,sse2"))) static std::uint64_t prefix_clmul(std::uint64_t q) {
-        const __m128i v = _mm_clmulepi64_si128(_mm_set_epi64x(0, static_cast<long long>(q)), _mm_set1_epi8(-1), 0);
-        return static_cast<std::uint64_t>(_mm_cvtsi128_si64(v));
+        const V2 v = __builtin_ia32_pclmulqdq128(V2{static_cast<long long>(q), 0}, V2{-1, -1}, 0);
+        return static_cast<std::uint64_t>(v[0]);
     }
 
-    __attribute__((target("avx2"))) static std::uint32_t eq32(__m256i x, char c) {
-        return static_cast<std::uint32_t>(_mm256_movemask_epi8(_mm256_cmpeq_epi8(x, _mm256_set1_epi8(c))));
+    __attribute__((target("avx2"))) static std::uint32_t mask32(V32 m) {
+        return static_cast<std::uint32_t>(__builtin_ia32_pmovmskb256(m));
     }
+    __attribute__((target("avx2"))) static std::uint32_t eq32(V32 x, char c) { return mask32(x == c); }
 
     // Classes by nibble lookup: the low nibble picks a candidate byte, one compare confirms
     // it. Unused entries hold a byte whose low nibble differs from their index.
-    __attribute__((target("avx2"))) static std::uint32_t lookup32(__m256i x, __m256i tbl) {
-        const __m256i nib = _mm256_and_si256(x, _mm256_set1_epi8(0x0F));
-        return static_cast<std::uint32_t>(_mm256_movemask_epi8(_mm256_cmpeq_epi8(_mm256_shuffle_epi8(tbl, nib), x)));
+    __attribute__((target("avx2"))) static std::uint32_t lookup32(V32 x, V32 tbl) {
+        return mask32(__builtin_ia32_pshufb256(tbl, x & 0x0F) == x);
     }
 
     __attribute__((target("avx2,pclmul"))) bool stage1_avx2() {
         reset_stage1();
         // , = 0x2C  : = 0x3A  { = 0x7B  } = 0x7D;  [ = 0x5B  ] = 0x5D;  blanks 0x20 0x09 0x0A 0x0D
-        const __m256i ops1 = _mm256_setr_epi8(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, ':', '{', ',', '}', 0, 0,
-                                              1, 0, 0, 0, 0, 0, 0, 0, 0, 0, ':', '{', ',', '}', 0, 0);
-        const __m256i ops2 = _mm256_setr_epi8(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '[', 0, ']', 0, 0,
-                                              1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '[', 0, ']', 0, 0);
-        const __m256i blank = _mm256_setr_epi8(' ', 0, 0, 0, 0, 0, 0, 0, 0, '\t', '\n', 0, 0, '\r', 0, 0,
-                                               ' ', 0, 0, 0, 0, 0, 0, 0, 0, '\t', '\n', 0, 0, '\r', 0, 0);
+        const V32 ops1 = {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, ':', '{', ',', '}', 0, 0,
+                          1, 0, 0, 0, 0, 0, 0, 0, 0, 0, ':', '{', ',', '}', 0, 0};
+        const V32 ops2 = {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '[', 0, ']', 0, 0,
+                          1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '[', 0, ']', 0, 0};
+        const V32 blank = {' ', 0, 0, 0, 0, 0, 0, 0, 0, '\t', '\n', 0, 0, '\r', 0, 0,
+                           ' ', 0, 0, 0, 0, 0, 0, 0, 0, '\t', '\n', 0, 0, '\r', 0, 0};
         alignas(32) char pad[64];
         for (std::size_t base = 0; base < t_.size(); base += 64) {
             const char* p = block_at(base, pad);
-            const __m256i lo = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p));
-            const __m256i hi = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p + 32));
+            V32 lo, hi;
+            __builtin_memcpy(&lo, p, 32);
+            __builtin_memcpy(&hi, p + 32, 32);
             auto join = [](std::uint32_t a, std::uint32_t b) { return a | static_cast<std::uint64_t>(b) << 32; };
             const std::uint64_t o = join(lookup32(lo, ops1) | lookup32(lo, ops2), lookup32(hi, ops1) | lookup32(hi, ops2));
             const std::uint64_t w = join(lookup32(lo, blank), lookup32(hi, blank));
