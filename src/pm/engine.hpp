@@ -278,9 +278,13 @@ class Engine {
         if (cancelled) pump(ns);
         for (int s = 0; s < 2; ++s) {
             if (px[s] < 0 || seq[s] == t.live[s].seq) continue;
+            exec::Qty q = static_cast<exec::Qty>(t.maker.size() * 1e6 + 0.5);
+            if (s && p_.long_only) {  // D27: asks only up to held shares, in 2-dp sizes; retried at the next sync
+                q = std::min(q, ledger_.available_pos(i) / 10'000 * 10'000);
+                if (q < rules_[i].min_qty) continue;
+            }
             t.live[s].seq = seq[s];
-            const exec::OrderIntent in{i, s ? exec::Side::Sell : exec::Side::Buy, exec::Tif::Gtc, true, 0, px[s],
-                                       static_cast<exec::Qty>(t.maker.size() * 1e6 + 0.5), 0};
+            const exec::OrderIntent in{i, s ? exec::Side::Sell : exec::Side::Buy, exec::Tif::Gtc, true, 0, px[s], q, 0};
             const exec::MarketView mv{t.maker.book.best_bid(), t.maker.book.best_ask(), t.seeded, !t.seeded, &rules_[i]};
             t.live[s].cl = oms_.submit(in, mv, ns, sink);
         }

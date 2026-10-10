@@ -161,10 +161,24 @@ TEST(Engine, VenueMakerInventoryFollowsTheLedgerThroughSettlementFailure) {
     Engine e(p);
     feed(e, {{kS, book("A", "0.48", "0.52")}, {kS + 1, trade("A", "SELL", "0.01", "1")}});  // we buy 100 of A
     const std::uint32_t a = e.token("A");
-    ASSERT_EQ(e.ledger().pos(a), 100000000);
+    ASSERT_EQ(e.ledger().pos(a), 100'000'000);
     EXPECT_EQ(e.maker(a).inventory(), 100);
     feed(e, {{3 * kS, change("A", "BUY", "0.47", "1")}});  // past the settlement delay: it failed
     EXPECT_EQ(e.ledger().pos(a), 0);
     EXPECT_EQ(e.maker(a).inventory(), 0);
     EXPECT_EQ(e.maker(a).pnl(), 0);  // the cash came back too
+}
+
+TEST(Engine, VenueMakerAsksOnlyUpToHeldShares) {
+    auto p = params();
+    p.venue = true;
+    Engine e(p);
+    feed(e, {{kS, book("A", "0.48", "0.52")}});
+    const std::uint32_t a = e.token("A");
+    EXPECT_GE(e.maker(a).ask_px(), 0);
+    EXPECT_EQ(e.oms().open_orders(), 1u);  // the bid; no shares, so no ask
+    feed(e, {{kS + 1, trade("A", "SELL", "0.48", "530.505")}});  // 500 ahead of our bid, then we buy 30.505
+    ASSERT_EQ(e.ledger().pos(a), 30'505'000);
+    EXPECT_EQ(e.ledger().available_pos(a), 5'000);  // 30.50 offered: sizes have 2 dp
+    EXPECT_EQ(e.oms().open_orders(), 2u);
 }
