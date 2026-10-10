@@ -33,6 +33,12 @@ class Ledger {
     void ensure(std::uint32_t n) {
         if (n > toks_.size()) toks_.resize(n);
     }
+    // Setup only: token t belongs to group g; group and total held cost are then kept as running
+    // sums, so risk reads them in O(1).
+    void set_group(std::uint32_t t, std::uint32_t g) {
+        toks_[t].group = g;
+        if (g >= group_cost_.size()) group_cost_.resize(g + 1, 0);
+    }
 
     // A matched fill. `fill_id` must be below 2^40 and unique among pending fills.
     void fill(std::uint64_t fill_id, std::uint32_t t, Side side, Px px, Qty q, Usd fee) {
@@ -105,6 +111,8 @@ class Ledger {
     Qty available_pos(std::uint32_t t) const { return toks_[t].pos - toks_[t].reserved; }
     Qty confirmed(std::uint32_t t) const { return toks_[t].confirmed; }
     Usd cost(std::uint32_t t) const { return toks_[t].cost; }
+    Usd cost() const { return cost_total_; }
+    Usd group_cost(std::uint32_t g) const { return g < group_cost_.size() ? group_cost_[g] : 0; }
     Usd realised() const { return realised_; }
     Usd fees() const { return fees_; }
     std::uint64_t deficits() const { return deficits_; }
@@ -121,7 +129,7 @@ class Ledger {
     bool identity_holds() const {
         Usd cost = 0;
         for (const Tok& k : toks_) cost += k.cost;
-        return cash_ - capital_ + cost == realised_ - fees_;
+        return cost == cost_total_ && cash_ - capital_ + cost == realised_ - fees_;
     }
     double capital_usd_days() const {
         return static_cast<double>(capital_ns_) / (static_cast<double>(kDollar) * 86'400e9);
@@ -131,7 +139,14 @@ class Ledger {
     struct Tok {
         Qty pos = 0, confirmed = 0, reserved = 0;
         Usd cost = 0;
+        std::uint32_t group = ~0u;  // none
     };
+
+    void add_cost(Tok& k, Usd d) {
+        k.cost += d;
+        cost_total_ += d;
+        if (k.group != ~0u) group_cost_[k.group] += d;
+    }
 
     void apply(std::uint32_t t, Side side, Px px, Qty q, Usd fee) {
         Tok& k = toks_[t];
@@ -139,7 +154,7 @@ class Ledger {
         fees_ += fee;
         if (side == Side::Buy) {
             cash_ -= amount + fee;
-            k.cost += amount;
+            add_cost(k, amount);
             k.pos += q;
             return;
         }
@@ -150,7 +165,7 @@ class Ledger {
         else ++deficits_;
         cash_ += amount - fee;
         realised_ += amount - removed;
-        k.cost -= removed;
+        add_cost(k, -removed);
         k.pos -= q;
     }
 
@@ -166,6 +181,8 @@ class Ledger {
 
     Usd capital_, cash_, reserved_cash_ = 0, realised_ = 0, fees_ = 0;
     std::vector<Tok> toks_;
+    std::vector<Usd> group_cost_;
+    Usd cost_total_ = 0;
     Pool<Fill> pending_;
     std::vector<std::uint32_t> next_free_;
     book::LinearMap ids_;

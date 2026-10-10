@@ -9,7 +9,7 @@ add_executable(hft_tests endian_test.cpp itch_test.cpp store_test.cpp gzip_test.
                          intensity_test.cpp net_test.cpp pm_test.cpp
                          tape_test.cpp spsc_test.cpp histogram_test.cpp
                          arb_test.cpp engine_test.cpp session_test.cpp
-                         exec_test.cpp ledger_test.cpp)
+                         exec_test.cpp ledger_test.cpp risk_test.cpp)
 target_link_libraries(hft_tests PRIVATE hft_core hft_data GTest::gtest_main rapidcheck
                                         zstd::libzstd OpenSSL::SSL OpenSSL::Crypto)
 target_compile_definitions(hft_tests PRIVATE HFT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
