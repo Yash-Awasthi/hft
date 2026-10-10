@@ -37,7 +37,11 @@ TEST(Config, KeysSetTheirFieldsInTheirUnits) {
         "token_cap_usd = 12500.5\n"
         "max_open = 64\n"
         "size = 10\n"
-        "gamma = 0.01\n");
+        "gamma = 0.01\n"
+        "arb = 1\n"
+        "arb_min_edge = 0.005\n"
+        "attempt_bound_usd = 1000\n"
+        "merge_ms = 3000\n");
     EXPECT_EQ(p.sim.seed, 7u);
     EXPECT_EQ(p.sim.lat_in, 91'000'000);
     EXPECT_EQ(p.sim.lat_out, 91'000'000);
@@ -51,6 +55,10 @@ TEST(Config, KeysSetTheirFieldsInTheirUnits) {
     EXPECT_EQ(p.risk.max_open, 64u);
     EXPECT_EQ(p.maker.size, 10);
     EXPECT_EQ(p.maker.gamma, 0.01);
+    EXPECT_TRUE(p.arb.on);
+    EXPECT_EQ(p.arb.min_edge, 50);
+    EXPECT_EQ(p.arb.attempt_bound, 1'000 * exec::kDollar);
+    EXPECT_EQ(p.arb.merge_delay, 3'000'000'000);
 }
 
 TEST(Config, CompatModeLiftsTheLimitsTheOldModelNeverHad) {

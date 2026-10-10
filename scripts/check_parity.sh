@@ -8,6 +8,6 @@ for R in ~/data/pm-live/2*/; do
     b=$($B --replay $R $args --venue-compat --dump-fills ${TMPDIR:-/tmp}/pb.txt 2>&1 >/dev/null | tee ${TMPDIR:-/tmp}/pb.err | grep -o "decision_hash [0-9a-f]*" | tail -1)
     n=$(wc -l < ${TMPDIR:-/tmp}/pa.txt)
     if [ "$a" = "$b" ] && cmp -s ${TMPDIR:-/tmp}/pa.txt ${TMPDIR:-/tmp}/pb.txt; then r=SAME; else r=DIFF; fi
-    echo "$(basename $R) [$args] fills $n $a | $r | $(grep venue ${TMPDIR:-/tmp}/pb.err)"
+    echo "$(basename $R) [$args] fills $n $a | $r | $(grep "^venue" ${TMPDIR:-/tmp}/pb.err)"
   done
 done

@@ -224,6 +224,8 @@ struct GroupRow {
 // are reused, so taking it allocates nothing after the first second.
 constexpr const char* kRejectNames[] = {"none", "killed", "frozen", "tick", "size", "no_book", "collar",
                                        "self_cross", "position", "group", "gross", "cash", "throttle", "too_many"};
+constexpr const char* kFilterNames[] = {"pass", "young", "stale", "frozen", "self_cross", "size", "edge"};
+static_assert(std::size(kFilterNames) == static_cast<std::size_t>(exec::ArbFilter::kCount));
 constexpr const char* kKillNames[] = {"none", "operator", "loss", "deficit", "reject_spike", "mismatch", "leg_exposure", "internal"};
 static_assert(std::size(kRejectNames) == static_cast<std::size_t>(exec::Reject::kCount));
 
@@ -487,12 +489,20 @@ void exec_summary(const Options& o, const Engine& e, const DecisionHash& dh) {
     v2.add(dh.h, e.exec_hash());
     const exec::Ledger& l = e.ledger();
     const exec::SimStats& v = e.venue_stats();
-    std::uint64_t risk_rejects = 0;
-    for (std::size_t r = 1; r < static_cast<std::size_t>(exec::Reject::kCount); ++r) risk_rejects += e.exec_risk().count(static_cast<exec::Reject>(r));
+    std::string risk_rejects;  // by reason, those that occurred
+    for (std::size_t r = 1; r < static_cast<std::size_t>(exec::Reject::kCount); ++r)
+        if (const std::uint64_t k = e.exec_risk().count(static_cast<exec::Reject>(r)))
+            risk_rejects += (risk_rejects.empty() ? "" : ",") + std::string(kRejectNames[r]) + ":" + std::to_string(k);
+    if (risk_rejects.empty()) risk_rejects = "0";
+    const exec::ArbStats& a = e.arb_exec().stats();
+    std::string filtered;  // windows never attempted, by the filter that last refused them
+    for (std::size_t f = 1; f < static_cast<std::size_t>(exec::ArbFilter::kCount); ++f)
+        filtered += (f > 1 ? "," : "") + std::string(kFilterNames[f]) + ":" + std::to_string(a.filtered[f]);
+    const std::size_t residual = e.arb_exec().residual_groups();
     const std::pair<const char*, std::string> rows[] = {
         {"events", std::to_string(e.events())},
         {"orders", std::to_string(v.orders)},
-        {"risk_rejects", std::to_string(risk_rejects)},
+        {"risk_rejects", risk_rejects},
         {"venue_rejects", std::to_string(v.rejects)},
         {"maker_fills", std::to_string(v.maker_fills)},
         {"taker_fills", std::to_string(v.taker_fills)},
@@ -501,6 +511,20 @@ void exec_summary(const Options& o, const Engine& e, const DecisionHash& dh) {
         {"position_mismatches", std::to_string(e.position_mismatches())},
         {"kill", kKillNames[static_cast<int>(e.exec_risk().kill_reason())]},
         {"open_orders", std::to_string(e.oms().open_orders())},
+        {"arb_windows", std::to_string(a.windows)},
+        {"arb_filtered", filtered},
+        {"arb_attempts", std::to_string(a.attempts)},
+        {"arb_complete", std::to_string(a.complete)},
+        {"arb_empty", std::to_string(a.empty)},
+        {"arb_completed_after_leg_loss", std::to_string(a.completed)},
+        {"arb_unwound", std::to_string(a.unwound)},
+        {"arb_frozen", "bound:" + std::to_string(a.frozen_bound) + ",depth:" + std::to_string(a.frozen_depth) + ",retries:" + std::to_string(a.frozen_retries)},
+        {"arb_residual_groups", std::to_string(residual)},
+        {"arb_merges", std::to_string(a.merges)},
+        {"arb_splits", std::to_string(a.splits)},
+        {"arb_realised_usd", fmt("%.6f", static_cast<double>(a.realised) / exec::kDollar)},
+        {"arb_sets_held", fmt("%.2f", static_cast<double>(e.arb_exec().sets_held()) * 1e-6)},
+        {"arb_held_cash_usd", fmt("%.6f", static_cast<double>(e.arb_exec().open_cash()) / exec::kDollar)},
         {"ledger_pnl_usd", fmt("%.6f", static_cast<double>(e.exec_pnl()) / exec::kDollar)},
         {"fees_usd", fmt("%.6f", static_cast<double>(l.fees()) / exec::kDollar)},
         {"capital_usd_days", fmt("%.6f", l.capital_usd_days())},

@@ -16,6 +16,7 @@
 #include <string_view>
 #include <vector>
 
+#include "exec/arb_exec.hpp"
 #include "exec/oms.hpp"
 #include "exec/sim_venue.hpp"
 #include "pm/arb.hpp"
@@ -39,6 +40,7 @@ struct EngineParams {
     bool long_only = true;
     exec::Usd capital = 1'000'000 * exec::kDollar;  // paper account (D3)
     std::uint16_t session = 1;  // top bits of every client order id (DESIGN T6)
+    exec::ArbParams arb;        // arbitrage executor, venue mode only
 };
 
 struct Decision {
@@ -57,8 +59,9 @@ class Engine {
         : p_(p),
           ledger_(p.capital, p.long_only),
           risk_(p.risk),
-          oms_(p.session, risk_, exp_, ledger_),
-          sim_(p.sim, BookOf{this}) {}
+          oms_(p.session, risk_, exp_, ledger_, oms_config(p.sim)),
+          sim_(p.sim, BookOf{this}),
+          ax_(p.arb) {}
 
     // Token index for an id, created on first sight.
     std::uint32_t token(std::string_view id) {
@@ -73,7 +76,7 @@ class Engine {
                 const std::uint32_t n = i + 1;
                 ledger_.ensure(n), exp_.ensure(n, 1), risk_.ensure(n), oms_.ensure(n), sim_.ensure(n);
                 ledger_.set_group(i, 0), exp_.set_group(i, 0), risk_.set_group(i, 0);
-                rules_.resize(n), mid_.resize(n, 0), liq_.resize(n, 0);
+                rules_.resize(n), mid_.resize(n, 0), liq_.resize(n, 0), gid_.resize(n, 0);
                 sim_.set_rules(i, rules_[i]);
             }
         }
@@ -92,10 +95,12 @@ class Engine {
     std::uint32_t add_group(std::string name, const std::vector<std::string>& ids) {
         std::vector<std::uint32_t> ts;
         for (const auto& id : ids) ts.push_back(token(id));
+        if (p_.venue) gtok_.push_back(ts);
         return arb_.add_group(std::move(name), std::move(ts));
     }
 
     void on_event(std::int64_t ns, const Event& e) {
+        if (!ready_) setup();
         if (ns >= next_tick_) tick(ns);
         ++events_;
         switch (e.kind) {
@@ -106,7 +111,7 @@ class Engine {
                 for (const auto& l : e.bids) t.maker.book.set(true, l.px, l.size);
                 for (const auto& l : e.asks) t.maker.book.set(false, l.px, l.size);
                 if (e.tick > 0) t.maker.tick = e.tick;
-                t.seeded = true;
+                t.seeded = true, t.updated = ns;
                 if (p_.venue) sim_.on_snapshot(i);
                 t.maker.on_snapshot(ns);
                 sync(i, ns);
@@ -119,6 +124,7 @@ class Engine {
                     const std::uint32_t i = token(c.asset);
                     if (!toks_[i]->seeded) continue;
                     toks_[i]->maker.book.set(c.buy, c.px, c.size);
+                    toks_[i]->updated = ns;
                     if (p_.venue) sim_.on_level(i, c.buy, c.px);
                     if (std::find(touched_.begin(), touched_.end(), i) == touched_.end()) touched_.push_back(i);
                 }
@@ -170,6 +176,9 @@ class Engine {
         if (p_.venue) {  // order timeouts, freeing finished orders, position reconciliation (R14)
             auto sink = [&](const exec::VenueReq& r) { send(r, ns); };
             oms_.on_timer(ns, sink);
+            pump(ns);
+            ArbCtx c{*this, ns};
+            ax_.on_timer(ns, c);
             pump(ns);
             // Fills in flight (latency, settlement, a held connection) make positions differ for
             // a while; only a difference that outlasts all of them is a missing fill.
@@ -236,6 +245,7 @@ class Engine {
     // after each report, and the kill (A4.2); quotes are in the decision log instead.
     std::uint64_t exec_hash() const { return xh_.value(); }
     bool venue() const { return p_.venue; }
+    const exec::ArbExec& arb_exec() const { return ax_; }
     // Ledger PnL at the marks of the last risk tick.
     exec::Usd exec_pnl() const { return ledger_.total(mid_.data()); }
 
@@ -263,6 +273,7 @@ class Engine {
         TokenMaker maker;
         Live live[2];  // [0] bid, [1] ask
         std::int64_t mismatch_since = 0;  // venue and ledger positions differ since; -1 once reported
+        std::int64_t updated = 0;         // last book change
         std::uint32_t conn = ~0u;
         bool seeded = false;
         std::int32_t bid = -1, ask = -1;  // last logged quotes
@@ -294,7 +305,7 @@ class Engine {
             if (px[s] < 0 || seq[s] == t.live[s].seq) continue;
             exec::Qty q = static_cast<exec::Qty>(t.maker.size() * 1e6 + 0.5);
             if (s && p_.long_only) {  // D27: asks only up to held shares, in 2-dp sizes; retried at the next sync
-                q = std::min(q, ledger_.available_pos(i) / 10'000 * 10'000);
+                q = std::min(q, (ledger_.available_pos(i) - ax_.held(i)) / 10'000 * 10'000);
                 if (q < rules_[i].min_qty) continue;
             }
             t.live[s].seq = seq[s];
@@ -306,33 +317,53 @@ class Engine {
         }
         pump(ns);
     }
-    // Delivers everything the venue has due at `ns` to the order manager; fills reach the maker.
+    // Delivers everything the venue has due at `ns` to the order manager; fills reach their
+    // strategy. The arbitrage executor decides after each round of reports (never inside the
+    // order manager's callback), which may send more orders, delivered by the next round.
     void pump(std::int64_t ns) {
-        sim_.run(ns, true, [&](const exec::VenueRpt& r) {
-            if (r.kind == exec::VenueRpt::Reject) risk_.on_venue_reject(ns);
-            const exec::Ledger::Fill* f = r.kind == exec::VenueRpt::SettleFailed ? ledger_.pending(r.fill_id) : nullptr;
-            if (f) toks_[f->token]->maker.on_settle_failed(f->side == exec::Side::Buy, f->px, static_cast<double>(f->qty) * 1e-6);
-            const std::uint32_t failed = f ? f->token : kAll;
-            xh_.add(ns, r.kind, r.status, r.reason, r.px, r.qty, r.fee, r.cl_id, r.venue_id, r.fill_id, r.venue_ns);
-            oms_.on_report(r, ns, [&](const exec::Order& o, exec::OrdEvent ev, exec::Qty q, exec::Px p) {
-                Tok& t = *toks_[o.in.token];
-                const int s = o.in.side == exec::Side::Buy ? 0 : 1;
-                const bool current = t.live[s].cl == o.cl_id;
-                if (ev == exec::OrdEvent::Fill) {
-                    t.maker.on_fill(ns, s == 0, p, static_cast<double>(q) * 1e-6, current);
-                    own(o.in.token);
-                    if (!in_trade_) ++fills_, log_.push_back({Decision::Fill, ns, o.in.token, p, 0, t.maker.inventory()});
-                }
-                if (current && exec::terminal(o.state)) t.live[s].cl = 0;
-            });
-            if (failed != kAll) own(failed);
-            xh_.add(ledger_.cash(), ledger_.realised());
+        for (int round = 0; round < 64; ++round) {
+            sim_.run(ns, true, [&](const exec::VenueRpt& r) { deliver(r, ns); });
+            if (!ax_.dirty()) return;
+            ArbCtx c{*this, ns};
+            ax_.process(ns, c);
+        }
+    }
+    void deliver(const exec::VenueRpt& r, std::int64_t ns) {
+        if (r.kind == exec::VenueRpt::Reject) risk_.on_venue_reject(ns);
+        const bool settle = r.kind == exec::VenueRpt::Settled || r.kind == exec::VenueRpt::SettleFailed;
+        const exec::Ledger::Fill* pf = settle ? ledger_.pending(r.fill_id) : nullptr;
+        const exec::Ledger::Fill f = pf ? *pf : exec::Ledger::Fill{};
+        const exec::Order* so = pf ? oms_.order(r.cl_id) : nullptr;
+        const bool arb_fill = so && so->cl_id == r.cl_id && so->in.strategy == kArb;
+        const std::uint32_t arb_tag = arb_fill ? so->in.tag : 0;
+        const bool failed = pf && r.kind == exec::VenueRpt::SettleFailed;
+        if (failed && !arb_fill) toks_[f.token]->maker.on_settle_failed(f.side == exec::Side::Buy, f.px, static_cast<double>(f.qty) * 1e-6);
+        xh_.add(ns, r.kind, r.status, r.reason, r.px, r.qty, r.fee, r.cl_id, r.venue_id, r.fill_id, r.venue_ns);
+        oms_.on_report(r, ns, [&](const exec::Order& o, exec::OrdEvent ev, exec::Qty q, exec::Px p) {
+            if (o.in.strategy == kArb) {
+                if (ev == exec::OrdEvent::Fill) ax_.on_fill(o.in.tag, o.in.side, p, q, rules_[o.in.token]), own(o.in.token);
+                if (exec::terminal(o.state)) ax_.on_done(o.in.tag, o.cl_id);
+                return;
+            }
+            Tok& t = *toks_[o.in.token];
+            const int s = o.in.side == exec::Side::Buy ? 0 : 1;
+            const bool current = t.live[s].cl == o.cl_id;
+            if (ev == exec::OrdEvent::Fill) {
+                t.maker.on_fill(ns, s == 0, p, static_cast<double>(q) * 1e-6, current);
+                own(o.in.token);
+                if (!in_trade_) ++fills_, log_.push_back({Decision::Fill, ns, o.in.token, p, 0, t.maker.inventory()});
+            }
+            if (current && exec::terminal(o.state)) t.live[s].cl = 0;
         });
+        if (arb_fill) ax_.on_settle(arb_tag, f, r.kind == exec::VenueRpt::Settled);
+        if (failed) own(f.token);
+        xh_.add(ledger_.cash(), ledger_.realised());
     }
     // R16: the first time the switch is seen tripped, every open order is cancelled.
     void cancel_if_killed(std::int64_t ns) {
         if (!risk_.killed() || cancelled_all_) return;
         cancelled_all_ = true;
+        ax_.halt();
         xh_.add(ns, risk_.kill_reason());
         oms_.cancel_all(ns, [&](const exec::VenueReq& r) { send(r, ns); });
         pump(ns);
@@ -341,7 +372,8 @@ class Engine {
         xh_.add(ns, r.kind, r.side, r.tif, r.post_only, r.token, r.px, r.qty, r.cl_id);
         sim_.request(r, ns);
     }
-    void own(std::uint32_t t) { toks_[t]->maker.set_inventory(static_cast<double>(ledger_.pos(t)) * 1e-6); }
+    // The maker's inventory: the ledger position less what the arbitrage executor holds.
+    void own(std::uint32_t t) { toks_[t]->maker.set_inventory(static_cast<double>(ledger_.pos(t) - ax_.held(t)) * 1e-6); }
 
     // Logs a quote change and re-checks the token's arbitrage groups.
     void after(std::int64_t ns, std::uint32_t i) {
@@ -353,7 +385,88 @@ class Engine {
         }
         arb_.on_book(i, ns, [&](std::uint32_t k) -> const TokenBook& { return toks_[k]->maker.book; },
                      [&](const ArbWindow& w) { closed_.push_back(w); });
+        if (p_.venue) {
+            ArbCtx c{*this, ns};
+            ax_.on_book(i, ns, c);
+            pump(ns);
+        }
     }
+
+    static constexpr std::uint16_t kArb = 1;  // OrderIntent.strategy of the arbitrage executor; makers use 0
+
+    // Finished orders are kept until their settlements have surely arrived, so a settlement still
+    // finds the strategy that placed the order.
+    static exec::OmsConfig oms_config(const exec::SimConfig& s) {
+        exec::OmsConfig c;
+        const exec::Ns need = s.settle_delay + s.disc_for + 2 * (s.lat_out + s.jitter) + 10'000'000'000;
+        if (need > c.keep_done) c.keep_done = need;
+        return c;
+    }
+
+    // Before the first event: risk groups are events (tokens joined by any group: a market's Yes
+    // and No, an event's Yes tokens), and the arbitrage executor learns the groups. A group of two
+    // whose token belongs to no other group is a market's pair; the rest are events.
+    void setup() {
+        ready_ = true;
+        if (!p_.venue) return;
+        const auto n = static_cast<std::uint32_t>(toks_.size());
+        std::vector<std::uint32_t> root(n), count(n, 0), id(n, kAll);
+        for (std::uint32_t t = 0; t < n; ++t) root[t] = t;
+        auto find = [&](std::uint32_t x) {
+            while (root[x] != x) x = root[x] = root[root[x]];
+            return x;
+        };
+        for (const auto& g : gtok_)
+            for (const std::uint32_t t : g) ++count[t], root[find(t)] = find(g[0]);
+        std::uint32_t groups = 0;
+        for (std::uint32_t t = 0; t < n; ++t)
+            if (id[find(t)] == kAll) id[find(t)] = groups++;
+        exp_.ensure(n, groups);
+        for (std::uint32_t t = 0; t < n; ++t) {
+            gid_[t] = id[find(t)];
+            ledger_.set_group(t, gid_[t]), exp_.set_group(t, gid_[t]), risk_.set_group(t, gid_[t]);
+        }
+        for (const auto& g : gtok_) ax_.add_group(g, g.size() == 2 && (count[g[0]] == 1 || count[g[1]] == 1));
+    }
+
+    // What the arbitrage executor sees and does, at receive time `ns`.
+    struct ArbCtx {
+        Engine& e;
+        std::int64_t ns;
+        exec::LegView view(std::uint32_t t) const {
+            const Tok& k = *e.toks_[t];
+            return {&k.maker.book, &e.rules_[t], k.updated, e.oms_.frozen(t) || !k.seeded, e.exp_.own_bid(t), e.exp_.own_ask(t),
+                    [](const void* v, std::uint32_t tk, bool bid, exec::Px px) { return static_cast<const exec::SimVenue<BookOf>*>(v)->taken(tk, bid, px); },
+                    &e.sim_, t};
+        }
+        std::uint64_t submit(std::uint32_t t, exec::Side side, exec::Tif tif, exec::Px px, exec::Qty q, std::uint32_t tag) {
+            const Tok& k = *e.toks_[t];
+            const exec::OrderIntent in{t, side, tif, false, kArb, px, q, tag};
+            const exec::MarketView mv{k.maker.book.best_bid(), k.maker.book.best_ask(), k.seeded, !k.seeded, &e.rules_[t]};
+            exec::Reject why;
+            const std::uint64_t cl = e.oms_.submit(in, mv, ns, [&](const exec::VenueReq& r) { e.send(r, ns); }, &why);
+            e.xh_.add(ns, t, side, px, q, why, kArb);
+            return cl;
+        }
+        void cancel(std::uint64_t cl) { e.oms_.cancel(cl, ns, [&](const exec::VenueReq& r) { e.send(r, ns); }); }
+        void split(std::uint32_t yes, std::uint32_t no, exec::Qty q) {
+            e.ledger_.split(yes, no, q), e.sim_.convert(yes, q), e.sim_.convert(no, q);
+            e.xh_.add(ns, yes, no, q, 1);
+        }
+        void merge(std::uint32_t yes, std::uint32_t no, exec::Qty q) {
+            e.ledger_.merge(yes, no, q), e.sim_.convert(yes, -q), e.sim_.convert(no, -q);
+            e.own(yes), e.own(no);
+            e.xh_.add(ns, yes, no, q, 2);
+        }
+        exec::Usd cash() const { return e.ledger_.available_cash(); }
+        exec::Usd room(std::uint32_t t) const {
+            const std::uint32_t g = e.gid_[t];
+            const exec::Usd group = e.p_.risk.group_cap - e.ledger_.group_cost(g) - e.exp_.group_buy_usd(g);
+            const exec::Usd gross = e.p_.risk.gross_cap - e.ledger_.cost() - e.exp_.buy_usd();
+            return group < gross ? group : gross;
+        }
+        void kill() { e.risk_.kill(exec::KillReason::LegExposure, ns); }
+    };
 
     EngineParams p_;
     exec::Ledger ledger_;
@@ -363,6 +476,10 @@ class Engine {
     exec::SimVenue<BookOf> sim_;
     std::vector<MarketRules> rules_;
     std::vector<exec::Px> mid_, liq_;  // marks per token for the loss check
+    exec::ArbExec ax_;
+    std::vector<std::vector<std::uint32_t>> gtok_;  // groups as token lists, until setup
+    std::vector<std::uint32_t> gid_;               // risk group (event) per token
+    bool ready_ = false;
     std::uint64_t mismatches_ = 0;
     exec::Hash64 xh_;
     bool cancelled_all_ = false, in_trade_ = false;

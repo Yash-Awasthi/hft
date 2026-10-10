@@ -60,15 +60,15 @@ Step template: do -> check. "Ask" = stop and ask the owner before continuing.
 - [x] E4.4 Paper mode on live feed with inline SimVenue (reuse pm_live feed/ring/recorder). `pm_exec --paper --run OUT`: a 90 s paper run replays (`pm_exec --replay OUT`) to the same three hashes.
 - [x] E4.5 Metrics A5 through existing hand-off; kill via SIGUSR1 and KILL file (D11, D13); SEC3 check. Kill: both triggers tested on paper runs (all orders cancelled, risk rejects Killed after, kill.log, latch refuses the next start, --reset-kill clears it; replay of the killed run reproduces it). SEC3: port on 127.0.0.1 only (ss -ltnp). A5 not yet: unknown_orders, cancel_races, per-operation latency (E6.1 measures it), leg_* (E5).
 - [x] E4.5b Known bug: `pm_arb --help` (any unknown argument) throws filesystem_error uncaught; make all apps reject unknown flags with usage and exit 2. apps/args.hpp; scripts/check_cli.sh (8 apps failed before, none after; a missing input directory also exits 2).
-- [ ] E4.6 Ask: retire pm_live in favour of pm_exec, or keep both? Default: keep both until E7.
+- [x] E4.6 Ask: retire pm_live in favour of pm_exec, or keep both? Default: keep both until E7. Default taken (no fact against it).
 - G4: replay determinism; 1 h paper run: zero illegal transitions, zero reconcile mismatch; TSan 5 min paper run clean.
 
 ## E5 Arb executor
 
-- [ ] E5.1 Unit tests on constructed books: X2 filters, X3 net edge, X4 sizing, X7 complete vs unwind choice, R10/R15 bounds.
-- [ ] E5.2 src/exec/arb_exec.hpp, policies P and Q (X5), X9 one attempt per group.
-- [ ] E5.3 Fault campaign: leg faults (V9, V10, V11, V14 on one leg) at high rate on reference recording: every incomplete set completed, unwound, or frozen within bounds; no silent residual.
-- G5: all above.
+- [x] E5.1 Unit tests on constructed books: X2 filters, X3 net edge, X4 sizing, X7 complete vs unwind choice, R10/R15 bounds. tests/arb_exec_test.cpp (12/12 mutations caught).
+- [x] E5.2 src/exec/arb_exec.hpp, policies P and Q (X5), X9 one attempt per group. Engine glue and tests in tests/engine_test.cpp (EngineArb: pair merge, event hold, sell via split, complete, unwind, freeze by bound and by depth, R15, failed settlements, policy Q, group cap; 12/12 mutations caught). Config keys arb*, attempt_bound_usd, merge_ms.
+- [x] E5.3 Fault campaign: leg faults (V9, V10, V11, V14 on one leg) at high rate on reference recording: every incomplete set completed, unwound, or frozen within bounds; no silent residual. scripts/arb_fault_campaign.sh, faults at 30% on the reference recording and on 20261010T112758Z: zero illegal reports and zero residual groups in every run; dropped fills end in the mismatch kill (as G3a). Faults act on all reports, not one leg only.
+- G5: all above. MET 2026-10-10.
 
 ## E6 Demo and benchmarks (D12)
 

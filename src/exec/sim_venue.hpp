@@ -143,6 +143,14 @@ class SimVenue {
     // The venue's view of our position per token: every fill, less fills whose settlement it
     // decided will fail (the SettleFailed report reaches us settle_delay later).
     Qty position(std::uint32_t t) const { return toks_[t].pos; }
+    // What we took at a level since the feed last updated it (V24): gone for us, though displayed.
+    Qty taken(std::uint32_t t, bool buy_side, Px px) const {
+        for (const Overlay& v : toks_[t].overlay)
+            if (v.buy == buy_side && v.px == px) return v.qty;
+        return 0;
+    }
+    // Merge and split (V30) convert shares outside matching; the position view follows them.
+    void convert(std::uint32_t t, Qty q) { toks_[t].pos += q; }
     std::size_t scheduled() const { return q_.size(); }
 
     // Venue-side invariants (V15-V17), for tests: every order's fills add up to its cumulative
@@ -330,11 +338,6 @@ class SimVenue {
     bool marketable(const VOrder& o) const {
         const pm::TokenBook& b = book_(o.token);
         return o.side == Side::Buy ? b.best_ask() >= 0 && o.px >= b.best_ask() : b.best_bid() >= 0 && o.px <= b.best_bid();
-    }
-    Qty taken(std::uint32_t t, bool buy_side, Px px) const {
-        for (const Overlay& v : toks_[t].overlay)
-            if (v.buy == buy_side && v.px == px) return v.qty;
-        return 0;
     }
     // Opposite-side levels within the limit, best first: fn(px, shares displayed minus taken).
     template <class Fn>

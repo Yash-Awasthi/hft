@@ -131,4 +131,5 @@ Limits (print in every report): L2 has no order ids (queue estimated); others do
 - X8 Log per attempt: window id, policy, legs filled, cause (fault id or market), action, cost, net PnL, capital-days.
 - X9 One attempt per group at a time; no new attempt while a group has residual exposure.
 - X10 Pair completion: buy side merges the set (L6) when both legs are confirmed or matched per config; sell side splits first (L6) then sells both legs; a failed sell leg leaves inventory to unwind (X7).
-- X11 Batches: event legs in batches of 15 (D19); policy P sends batches back to back.
+- X11 Batches: event legs in batches of 15 (D19); policy P sends batches back to back. Not modelled: every leg is sent in the same instant (largest group recorded: 25 legs, two batches at the venue).
+- X12 Implementation (D29): ArbExec states Idle, Split, Legs, Resolve, Merge, Frozen per group. Order and settlement reports are recorded inside the order manager callback; decisions run after each round of venue reports (Engine::pump), so no order is placed from inside Oms::on_report. Legs carry OrderIntent.strategy 1 and tag group<<8|leg; settlements are routed by the order's tag (finished orders are kept past the settlement delay). Merge and split move the ledger and the venue's position together (V30), so R14 compares like with like.
