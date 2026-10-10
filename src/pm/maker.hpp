@@ -74,6 +74,13 @@ class TokenMaker {
     void on_fill(std::int64_t ns, bool buy, std::int32_t px, double qty, bool current) {
         if (qty > 0) book_fill(buy ? bid_ : ask_, !buy, qty, ns, px, current);
     }
+    // Venue mode: inventory is the ledger position (D26), set by the driver after every change.
+    void set_inventory(double q) {
+        inv_ = q;
+        max_abs_inv_ = std::max(max_abs_inv_, std::abs(inv_));
+    }
+    // A venue fill whose settlement failed: its cash flows back; inventory comes via set_inventory.
+    void on_settle_failed(bool buy, std::int32_t px, double qty) { cash_ += (buy ? qty : -qty) * px * 1e-4; }
 
     // `taker_buy`: the aggressor bought, so it consumes asks.
     void on_trade(std::int64_t ns, bool taker_buy, std::int32_t px, double size) {
@@ -120,8 +127,7 @@ class TokenMaker {
         if (fill_log) fill_log->push_back({ns, token_index, !taker_buy, px, fill});
         const double dollars = fill * px * 1e-4;
         cash_ += taker_buy ? dollars : -dollars;
-        inv_ += taker_buy ? -fill : fill;
-        max_abs_inv_ = std::max(max_abs_inv_, std::abs(inv_));
+        if (!venue_) set_inventory(inv_ + (taker_buy ? -fill : fill));
         (taker_buy ? sells_ : buys_) += 1;
         shares_ += fill;
         if (current && (o.rem -= fill) <= 0) o.px = -1;

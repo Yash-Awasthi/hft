@@ -151,3 +151,20 @@ TEST(Engine, GrossInventoryCapPausesEveryToken) {
     EXPECT_FALSE(e.maker(e.token("B")).enabled());
     EXPECT_FALSE(e.halted());
 }
+
+TEST(Engine, VenueMakerInventoryFollowsTheLedgerThroughSettlementFailure) {
+    auto p = params();
+    p.venue = true;
+    p.sim.compat_side = true;
+    p.sim.settle_delay = kS;
+    p.sim.p_settle_fail_ppm = 1000000;
+    Engine e(p);
+    feed(e, {{kS, book("A", "0.48", "0.52")}, {kS + 1, trade("A", "SELL", "0.01", "1")}});  // we buy 100 of A
+    const std::uint32_t a = e.token("A");
+    ASSERT_EQ(e.ledger().pos(a), 100000000);
+    EXPECT_EQ(e.maker(a).inventory(), 100);
+    feed(e, {{3 * kS, change("A", "BUY", "0.47", "1")}});  // past the settlement delay: it failed
+    EXPECT_EQ(e.ledger().pos(a), 0);
+    EXPECT_EQ(e.maker(a).inventory(), 0);
+    EXPECT_EQ(e.maker(a).pnl(), 0);  // the cash came back too
+}

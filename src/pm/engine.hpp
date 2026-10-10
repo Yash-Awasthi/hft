@@ -289,18 +289,24 @@ class Engine {
     // Delivers everything the venue has due at `ns` to the order manager; fills reach the maker.
     void pump(std::int64_t ns) {
         sim_.run(ns, true, [&](const exec::VenueRpt& r) {
+            const exec::Ledger::Fill* f = r.kind == exec::VenueRpt::SettleFailed ? ledger_.pending(r.fill_id) : nullptr;
+            if (f) toks_[f->token]->maker.on_settle_failed(f->side == exec::Side::Buy, f->px, static_cast<double>(f->qty) * 1e-6);
+            const std::uint32_t failed = f ? f->token : kAll;
             oms_.on_report(r, ns, [&](const exec::Order& o, exec::OrdEvent ev, exec::Qty q, exec::Px p) {
                 Tok& t = *toks_[o.in.token];
                 const int s = o.in.side == exec::Side::Buy ? 0 : 1;
                 const bool current = t.live[s].cl == o.cl_id;
                 if (ev == exec::OrdEvent::Fill) {
                     t.maker.on_fill(ns, s == 0, p, static_cast<double>(q) * 1e-6, current);
+                    own(o.in.token);
                     if (!in_trade_) ++fills_, log_.push_back({Decision::Fill, ns, o.in.token, p, 0, t.maker.inventory()});
                 }
                 if (current && exec::terminal(o.state)) t.live[s].cl = 0;
             });
+            if (failed != kAll) own(failed);
         });
     }
+    void own(std::uint32_t t) { toks_[t]->maker.set_inventory(static_cast<double>(ledger_.pos(t)) * 1e-6); }
 
     // Logs a quote change and re-checks the token's arbitrage groups.
     void after(std::int64_t ns, std::uint32_t i) {
