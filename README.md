@@ -41,7 +41,7 @@ forecaster, pre-registration) are kept at the [research-archive](https://github.
 | Matching engine | `src/engine/matching.hpp` | Price-time; property-tested against a naive reference |
 | Replay exchange | `src/engine/replay_exchange.hpp` | Virtual orders in real queues; queue, trade-through and hidden-print fill rules |
 | Backtest | `src/backtest/` | Event-driven; zero, random, foresight, naive, Avellaneda-Stoikov (GLFT), DP strategies |
-| Network | `src/net/` | TLS socket (OpenSSL for the cipher layer only), HTTP/1.1 GET, WebSocket framing, SHA-1, base64; tape JSON parser with an AVX2 first stage |
+| Network | `src/net/` | TLS socket (OpenSSL for the cipher layer only), HTTP/1.1 GET, WebSocket framing, SHA-1, base64; tape JSON parser with an AVX2 first stage; single-pass message decoder |
 | Prediction markets | `src/pm/`, `apps/pm_*.cpp` | Recorder, typed message decoder, flat bitmap book, book rebuild, logit Avellaneda-Stoikov maker |
 | Core | `src/core/` | Index-addressed pools, SPSC ring, log-linear histogram, `rdtscp` timing, Philox RNG |
 
@@ -176,7 +176,8 @@ pm_mm data/pm > mm.tsv            # logit Avellaneda-Stoikov maker on the record
 ```
 
 Both tools read a recording at about 1M messages per second: zstd decompression runs on a second
-thread, a tape JSON parser with an AVX2 first stage feeds a typed decoder, and each token's book
+thread, a single-pass message decoder (falling back to the tape JSON parser for anything outside
+the shapes the exchange sends) produces typed events, and each token's book
 is a flat price array with a two-level bitmap (on 2.0M messages, `pm_stats` went from 11.0 s and
 469 MB to 1.9 s and 31 MB with identical output).
 
@@ -229,6 +230,23 @@ Latency on this laptop (WSL2, one 60 s session each, per message, receive stamp 
 Under WSL2, waking an idle virtual CPU goes through the hypervisor, so the futex wake is
 slow; the default trades latency for an idle core. Ring queueing in spin mode comes from
 bursts: messages arrive back to back faster than they are processed.
+
+Live figures move with the market and the hypervisor, so the trading thread is tuned on a
+fixed recording instead: `pm_live --replay` times parse and engine for every message. On a
+5-hour run (2.0M messages, `native` build, pinned to two cores), against the code before the
+pass:
+
+| Change | Parse p50 / p99 / p99.9 | Engine p50 / p99 | Replay wall time |
+|---|---|---|---|
+| before | 975 / 3,424 / 15,707 ns | 240 / 740 ns | 2.43 s |
+| single-pass decoder (tape fallback on 1.4% of messages) | 545 / 3,122 / 8,379 ns | 232 / 633 ns | |
+| best price kept per book side, one token lookup per snapshot | | 176 / 525 ns | 1.92 s |
+
+The decision hash and `pm_stats` output are unchanged (`pm_stats` on 278 MB of recordings:
+4.17 s to 3.31 s). The decoder's single pass is checked against the tape by a property test
+and by the fuzzer. Metrics no longer render on the trading thread: once a second it swaps a
+snapshot and its window of histograms under a lock it only tries, and the HTTP thread does
+the rest (stall 376 µs to 24 µs at p50, 718 µs to 76 µs at worst, over 60 s live).
 
 ## License
 

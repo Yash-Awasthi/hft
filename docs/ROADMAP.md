@@ -52,8 +52,24 @@ cycle counts come from Cachegrind and `rdtscp`.
 - Arbitrage scanner: for markets whose outcomes are mutually exclusive, report when the
   best asks sum below 1 or the best bids sum above 1, with size and duration.
 
+## P5. Trading-thread pass (done)
+
+- `pm_live --replay` times parse and engine per message, so changes are measured on a fixed
+  recording rather than on the live market.
+- Single-pass message decoder with the tape as fallback and as the reference it is tested
+  against; best price kept per book side; metrics folded and rendered on the HTTP thread.
+- Recorder stops instead of stalling trading when it falls behind.
+- Result: README "Live paper trading"; replay wall time 2.43 s to 1.92 s.
+
 ## Next
 
+- Feed path: decode WebSocket frames straight into the ring (no `std::string` copy) and
+  stamp receipt with the kernel's socket timestamp, so wire-to-decision starts at the wire.
+- ITCH: table lookup for message lengths, cheaper empty-overflow checks in the book's best
+  price, batch-timed throughput next to the per-event figures.
+- Build: system zstd, LZ4, zlib-ng and OpenSSL instead of vcpkg; benchmarks on `rdtsc`.
+- Order manager and gateway in dry-run against a simulated venue: order state machine,
+  idempotent client ids, rate limits, kill switch, position reconciliation.
 - Let `pm_live --record` run for days next to the recorder, then report arbitrage windows
   (count, duration, edge, size) and maker fills per event.
 - Bare-Linux run for hardware counters and futex wake latency without a hypervisor.
